@@ -1,0 +1,6 @@
+.matplotlib/
+__pycache__/
+*.pyc
+*.png
+*.jpg
+*.csv
