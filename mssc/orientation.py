@@ -64,15 +64,29 @@ def local_orientation_coherence_from_h(
     eps: float = 1e-12,
 ) -> float:
     """
-    Compute energy-weighted nearest-neighbor coherence of local Haar vectors.
+    Compute energy-weighted nearest-neighbor nematic coherence
+    of local Haar detail vectors.
 
     h has shape (n, n, d), where d=3 for scalar images and d=3*C for RGB.
 
-    Returns Q in approximately [-1, 1].
+    The coherence is based on squared dot products:
+
+        q = <(h_hat_B dot h_hat_B')^2>_weighted
+
+    For random unit vectors in d dimensions, the expected value is 1/d.
+    We subtract this baseline and normalize so that:
+
+        Q = 0  for random orientations
+        Q = 1  for perfectly aligned or anti-aligned orientations
+
     If there is essentially no detail energy, returns 0.
     """
     if h.ndim != 3:
         raise ValueError("h must have shape (n, n, d)")
+
+    d = h.shape[-1]
+    if d <= 0:
+        raise ValueError("last dimension of h must be positive")
 
     energy = np.sum(h * h, axis=-1)
 
@@ -82,34 +96,34 @@ def local_orientation_coherence_from_h(
     norm = np.sqrt(energy + eps)
     unit = h / norm[..., None]
 
-    dots = []
-    weights = []
+    numerator = 0.0
+    denominator = 0.0
 
     # Horizontal neighboring block pairs.
     dot_x = np.sum(unit[:, :-1, :] * unit[:, 1:, :], axis=-1)
     w_x = np.sqrt(energy[:, :-1] * energy[:, 1:])
-
-    dots.append(dot_x)
-    weights.append(w_x)
+    numerator += float(np.sum(w_x * dot_x * dot_x))
+    denominator += float(np.sum(w_x))
 
     # Vertical neighboring block pairs.
     dot_y = np.sum(unit[:-1, :, :] * unit[1:, :, :], axis=-1)
     w_y = np.sqrt(energy[:-1, :] * energy[1:, :])
-
-    dots.append(dot_y)
-    weights.append(w_y)
-
-    numerator = 0.0
-    denominator = 0.0
-
-    for dot, weight in zip(dots, weights):
-        numerator += float(np.sum(weight * dot))
-        denominator += float(np.sum(weight))
+    numerator += float(np.sum(w_y * dot_y * dot_y))
+    denominator += float(np.sum(w_y))
 
     if denominator <= eps:
         return 0.0
 
-    return numerator / denominator
+    mean_dot2 = numerator / denominator
+
+    # Random-orientation baseline in d dimensions.
+    baseline = 1.0 / d
+
+    # Normalize baseline -> 0, perfect nematic alignment -> 1.
+    Q = (mean_dot2 - baseline) / (1.0 - baseline)
+
+    # Small negative values are expected from finite-size fluctuations.
+    return float(max(Q, 0.0))
 
 
 def local_orientation_coherence(

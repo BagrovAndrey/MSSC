@@ -22,14 +22,6 @@ def parse_size(value: str) -> int | str | None:
 
 
 def profile_entropy(profile: np.ndarray, eps: float = 1e-15) -> float:
-    """
-    Entropy of the normalized scale profile.
-
-    H = -sum_k p_k log p_k,
-    p_k = profile_k / sum_j profile_j.
-
-    If the profile has zero total weight, return 0.
-    """
     x = np.asarray(profile, dtype=float)
     total = float(np.sum(x))
 
@@ -43,11 +35,6 @@ def profile_entropy(profile: np.ndarray, eps: float = 1e-15) -> float:
 
 
 def entropic_complexity(profile: np.ndarray, eps: float = 1e-15) -> float:
-    """
-    Total weight times entropy over scales.
-
-    S = (sum_k profile_k) * H(profile_k / sum_j profile_j)
-    """
     x = np.asarray(profile, dtype=float)
     total = float(np.sum(x))
 
@@ -129,6 +116,15 @@ def to_display_image(image: np.ndarray) -> np.ndarray:
         arr = np.zeros_like(arr)
 
     return arr
+
+
+def show_image(ax, image: np.ndarray) -> None:
+    display = to_display_image(image)
+
+    if display.ndim == 2:
+        ax.imshow(display, cmap="gray", interpolation="nearest")
+    else:
+        ax.imshow(display, interpolation="nearest")
 
 
 def make_scrambled_image(
@@ -261,12 +257,12 @@ def save_comparison_plot(
     ax_Q = fig.add_subplot(gs[2, :])
     ax_O = fig.add_subplot(gs[3, :])
 
-    ax_img_1.imshow(to_display_image(original_image), interpolation="nearest")
+    show_image(ax_img_1, original_image)
     ax_img_1.set_title("Original\n" + format_summary_for_title(original_summary))
     ax_img_1.set_xticks([])
     ax_img_1.set_yticks([])
 
-    ax_img_2.imshow(to_display_image(scrambled_image), interpolation="nearest")
+    show_image(ax_img_2, scrambled_image)
     ax_img_2.set_title(scramble_label + "\n" + format_summary_for_title(scrambled_summary))
     ax_img_2.set_xticks([])
     ax_img_2.set_yticks([])
@@ -338,6 +334,7 @@ def main() -> None:
 
     print(f"Input: {args.input}")
     print(f"Image shape after loading/resizing: {image.shape}")
+    print(f"Mode: {args.mode}")
     print(f"Scramble mode: {args.scramble}")
     print(f"Seed: {args.seed}")
 
