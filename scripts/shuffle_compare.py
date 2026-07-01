@@ -44,6 +44,52 @@ def entropic_complexity(profile: np.ndarray, eps: float = 1e-15) -> float:
     return total * profile_entropy(x, eps=eps)
 
 
+def normalize_intensity(
+    image: np.ndarray,
+    mode: str = "none",
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Optional intensity normalization before computing MSSC.
+
+    mode="none":
+        Return the image unchanged.
+
+    mode="minmax":
+        Affinely map the image to the full input range.
+
+        If the image contains negative values, assume the natural range is [-1, 1].
+        Otherwise assume [0, 1].
+
+        For RGB/vector images, the min and max are taken globally across
+        all channels. This preserves relative color-channel amplitudes.
+    """
+    img = np.asarray(image, dtype=float)
+
+    if mode == "none":
+        return img
+
+    if mode != "minmax":
+        raise ValueError("normalize_intensity mode must be 'none' or 'minmax'")
+
+    vmin = float(np.min(img))
+    vmax = float(np.max(img))
+
+    if vmax - vmin <= eps:
+        return np.zeros_like(img)
+
+    # Preserve the convention already used by load_image.
+    if vmin < 0:
+        out_min, out_max = -1.0, 1.0
+    else:
+        out_min, out_max = 0.0, 1.0
+
+    normalized = (img - vmin) / (vmax - vmin)
+    normalized = out_min + normalized * (out_max - out_min)
+
+    return normalized
+
+
 def summarize_profiles(C: np.ndarray, Q: np.ndarray, O: np.ndarray) -> dict[str, float]:
     return {
         "C_total": float(np.sum(C)),
@@ -73,6 +119,18 @@ def parse_args() -> argparse.Namespace:
         "--value-range",
         choices=["0_1", "minus1_1"],
         default="minus1_1",
+    )
+
+    parser.add_argument(
+        "--normalize-intensity",
+        choices=["none", "minmax"],
+        default="none",
+        help="Optional intensity normalization before MSSC. Default: none.",
+    )
+    parser.add_argument(
+        "--compare-normalized",
+        action="store_true",
+        help="Run both raw and minmax-normalized analyses.",
     )
 
     parser.add_argument("--block-size", type=int, default=2)
@@ -244,6 +302,7 @@ def save_comparison_plot(
     original_summary: dict[str, float],
     scrambled_summary: dict[str, float],
     scramble_label: str,
+    normalization_label: str,
 ) -> None:
     k = np.arange(len(original_C))
 
@@ -270,7 +329,7 @@ def save_comparison_plot(
     ax_C.plot(k, original_C, marker="o", label="original")
     ax_C.plot(k, scrambled_C, marker="o", label=scramble_label)
     ax_C.set_ylabel("C_k")
-    ax_C.set_title("Naive MSSC profile")
+    ax_C.set_title(f"Naive MSSC profile ({normalization_label})")
     ax_C.legend()
 
     ax_Q.plot(k, original_Q, marker="o", label="original")
@@ -303,14 +362,21 @@ def print_summary(name: str, summary: dict[str, float]) -> None:
     print(f"  Q_mean  = {summary['Q_mean']:.12g}")
 
 
-def main() -> None:
-    args = parse_args()
+def add_suffix(path: Path, suffix: str) -> Path:
+    return path.with_name(f"{path.stem}_{suffix}{path.suffix}")
 
-    image = load_image(
-        args.input,
-        size=parse_size(args.size),
-        mode=args.mode,
-        value_range=args.value_range,
+
+def run_one_analysis(
+    image_loaded: np.ndarray,
+    args: argparse.Namespace,
+    normalization_mode: str,
+    out_plot: Path | None,
+    out_csv: Path | None,
+    save_scrambled: Path | None,
+) -> None:
+    image = normalize_intensity(
+        image_loaded,
+        mode=normalization_mode,
     )
 
     scrambled, scramble_label = make_scrambled_image(
@@ -332,16 +398,10 @@ def main() -> None:
         n_steps=args.n_steps,
     )
 
-    print(f"Input: {args.input}")
-    print(f"Image shape after loading/resizing: {image.shape}")
-    print(f"Mode: {args.mode}")
-    print(f"Scramble mode: {args.scramble}")
-    print(f"Seed: {args.seed}")
-
-    if args.scramble == "tile":
-        print(f"Tile size: {args.tile_size}")
-
     print()
+    print("=" * 72)
+    print(f"Intensity normalization: {normalization_mode}")
+    print("=" * 72)
     print_summary("Original:", original_summary)
     print()
     print_summary("Scrambled:", scrambled_summary)
@@ -355,9 +415,9 @@ def main() -> None:
             f"{scrambled_C[k]:.12g} {scrambled_Q[k]:.12g} {scrambled_O[k]:.12g}"
         )
 
-    if args.out_csv is not None:
+    if out_csv is not None:
         save_csv(
-            args.out_csv,
+            out_csv,
             original_C,
             original_Q,
             original_O,
@@ -365,11 +425,11 @@ def main() -> None:
             scrambled_Q,
             scrambled_O,
         )
-        print(f"Saved CSV: {args.out_csv}")
+        print(f"Saved CSV: {out_csv}")
 
-    if args.out_plot is not None:
+    if out_plot is not None:
         save_comparison_plot(
-            args.out_plot,
+            out_plot,
             image,
             scrambled,
             original_C,
@@ -381,12 +441,63 @@ def main() -> None:
             original_summary,
             scrambled_summary,
             scramble_label=scramble_label,
+            normalization_label=normalization_mode,
         )
-        print(f"Saved plot: {args.out_plot}")
+        print(f"Saved plot: {out_plot}")
 
-    if args.save_scrambled is not None:
-        save_image(scrambled, args.save_scrambled)
-        print(f"Saved scrambled display image: {args.save_scrambled}")
+    if save_scrambled is not None:
+        save_image(scrambled, save_scrambled)
+        print(f"Saved scrambled display image: {save_scrambled}")
+
+
+def main() -> None:
+    args = parse_args()
+
+    image_loaded = load_image(
+        args.input,
+        size=parse_size(args.size),
+        mode=args.mode,
+        value_range=args.value_range,
+    )
+
+    print(f"Input: {args.input}")
+    print(f"Image shape after loading/resizing: {image_loaded.shape}")
+    print(f"Mode: {args.mode}")
+    print(f"Value range: {args.value_range}")
+    print(f"Scramble mode: {args.scramble}")
+    print(f"Seed: {args.seed}")
+
+    if args.scramble == "tile":
+        print(f"Tile size: {args.tile_size}")
+
+    if args.compare_normalized:
+        run_one_analysis(
+            image_loaded=image_loaded,
+            args=args,
+            normalization_mode="none",
+            out_plot=add_suffix(args.out_plot, "raw") if args.out_plot else None,
+            out_csv=add_suffix(args.out_csv, "raw") if args.out_csv else None,
+            save_scrambled=add_suffix(args.save_scrambled, "raw") if args.save_scrambled else None,
+        )
+
+        run_one_analysis(
+            image_loaded=image_loaded,
+            args=args,
+            normalization_mode="minmax",
+            out_plot=add_suffix(args.out_plot, "minmax") if args.out_plot else None,
+            out_csv=add_suffix(args.out_csv, "minmax") if args.out_csv else None,
+            save_scrambled=add_suffix(args.save_scrambled, "minmax") if args.save_scrambled else None,
+        )
+
+    else:
+        run_one_analysis(
+            image_loaded=image_loaded,
+            args=args,
+            normalization_mode=args.normalize_intensity,
+            out_plot=args.out_plot,
+            out_csv=args.out_csv,
+            save_scrambled=args.save_scrambled,
+        )
 
 
 if __name__ == "__main__":
