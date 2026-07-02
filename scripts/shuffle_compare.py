@@ -11,7 +11,9 @@ from mssc.complexity import complexity_profile
 from mssc.image_io import load_image, save_image
 from mssc.orientation import (
     haar_channel_energy_profile,
+    lifted_haar_channel_energy_profile,
     local_orientation_coherence_profile,
+    local_scale_orientation_entropy_profile,
     orientation_diverse_organized_profile,
     orientation_entropy_profile,
     organized_profile,
@@ -102,23 +104,27 @@ def summarize_profiles(
     D: np.ndarray,
     O: np.ndarray,
     Odiv: np.ndarray,
-    J: np.ndarray,
+    Jglob: np.ndarray,
+    Jloc: np.ndarray,
 ) -> dict[str, float]:
     return {
         "C_total": float(np.sum(C)),
         "O_total": float(np.sum(O)),
         "Odiv_total": float(np.sum(Odiv)),
-        "J_total": float(np.sum(J)),
+        "Jglob_total": float(np.sum(Jglob)),
+        "Jloc_total": float(np.sum(Jloc)),
 
         "H_C": profile_entropy(C),
         "H_O": profile_entropy(O),
         "H_Odiv": profile_entropy(Odiv),
-        "H_J": profile_entropy(J),
+        "H_Jglob": profile_entropy(Jglob),
+        "H_Jloc": profile_entropy(Jloc),
 
         "S_C": entropic_complexity(C),
         "S_O": entropic_complexity(O),
         "S_Odiv": entropic_complexity(Odiv),
-        "S_J": entropic_complexity(J),
+        "S_Jglob": entropic_complexity(Jglob),
+        "S_Jloc": entropic_complexity(Jloc),
 
         "Q_mean": float(np.mean(Q)) if len(Q) else 0.0,
         "D_mean": float(np.mean(D)) if len(D) else 0.0,
@@ -246,7 +252,7 @@ def compute_all_profiles(
     image: np.ndarray,
     block_size: int = 2,
     n_steps: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
     if block_size != 2:
         raise ValueError(
             "Orientation observables are currently implemented only for block_size=2"
@@ -271,14 +277,19 @@ def compute_all_profiles(
         image,
         n_steps=n_steps,
     )
+    lifted_E = lifted_haar_channel_energy_profile(
+        image,
+        n_steps=n_steps,
+    )
 
     O = organized_profile(C, Q)
     Odiv = orientation_diverse_organized_profile(C, Q, D)
-    J = scale_orientation_entropy_profile(E, Q)
+    Jglob = scale_orientation_entropy_profile(E, Q)
+    Jloc = local_scale_orientation_entropy_profile(lifted_E, Q)
 
-    summary = summarize_profiles(C, Q, D, O, Odiv, J)
+    summary = summarize_profiles(C, Q, D, O, Odiv, Jglob, Jloc)
 
-    return C, Q, D, O, Odiv, J, summary
+    return C, Q, D, O, Odiv, Jglob, Jloc, summary
 
 
 def save_csv(
@@ -288,13 +299,15 @@ def save_csv(
     original_D: np.ndarray,
     original_O: np.ndarray,
     original_Odiv: np.ndarray,
-    original_J: np.ndarray,
+    original_Jglob: np.ndarray,
+    original_Jloc: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
     scrambled_D: np.ndarray,
     scrambled_O: np.ndarray,
     scrambled_Odiv: np.ndarray,
-    scrambled_J: np.ndarray,
+    scrambled_Jglob: np.ndarray,
+    scrambled_Jloc: np.ndarray,
 ) -> None:
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
@@ -306,13 +319,15 @@ def save_csv(
                 "original_D",
                 "original_O",
                 "original_Odiv",
-                "original_J",
+                "original_Jglob",
+                "original_Jloc",
                 "scrambled_C",
                 "scrambled_Q",
                 "scrambled_D",
                 "scrambled_O",
                 "scrambled_Odiv",
-                "scrambled_J",
+                "scrambled_Jglob",
+                "scrambled_Jloc",
             ]
         )
 
@@ -325,13 +340,15 @@ def save_csv(
                     original_D[k],
                     original_O[k],
                     original_Odiv[k],
-                    original_J[k],
+                    original_Jglob[k],
+                    original_Jloc[k],
                     scrambled_C[k],
                     scrambled_Q[k],
                     scrambled_D[k],
                     scrambled_O[k],
                     scrambled_Odiv[k],
-                    scrambled_J[k],
+                    scrambled_Jglob[k],
+                    scrambled_Jloc[k],
                 ]
             )
 
@@ -339,9 +356,9 @@ def save_csv(
 def format_summary_for_title(summary: dict[str, float]) -> str:
     return (
         f"C={summary['C_total']:.4g}, "
-        f"O={summary['O_total']:.4g}\n"
-        f"Odiv={summary['Odiv_total']:.4g}, "
-        f"J={summary['J_total']:.4g}"
+        f"Odiv={summary['Odiv_total']:.4g}\n"
+        f"Jglob={summary['Jglob_total']:.4g}, "
+        f"Jloc={summary['Jloc_total']:.4g}"
     )
 
 
@@ -354,13 +371,15 @@ def save_comparison_plot(
     original_D: np.ndarray,
     original_O: np.ndarray,
     original_Odiv: np.ndarray,
-    original_J: np.ndarray,
+    original_Jglob: np.ndarray,
+    original_Jloc: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
     scrambled_D: np.ndarray,
     scrambled_O: np.ndarray,
     scrambled_Odiv: np.ndarray,
-    scrambled_J: np.ndarray,
+    scrambled_Jglob: np.ndarray,
+    scrambled_Jloc: np.ndarray,
     original_summary: dict[str, float],
     scrambled_summary: dict[str, float],
     scramble_label: str,
@@ -368,8 +387,8 @@ def save_comparison_plot(
 ) -> None:
     k = np.arange(len(original_C))
 
-    fig = plt.figure(figsize=(11, 12))
-    gs = fig.add_gridspec(5, 2, height_ratios=[1.15, 0.7, 0.7, 0.7, 0.7])
+    fig = plt.figure(figsize=(11, 14))
+    gs = fig.add_gridspec(6, 2, height_ratios=[1.15, 0.7, 0.7, 0.7, 0.7, 0.7])
 
     ax_img_1 = fig.add_subplot(gs[0, 0])
     ax_img_2 = fig.add_subplot(gs[0, 1])
@@ -378,6 +397,7 @@ def save_comparison_plot(
     ax_Q = fig.add_subplot(gs[2, :])
     ax_D = fig.add_subplot(gs[3, :])
     ax_O = fig.add_subplot(gs[4, :])
+    ax_J = fig.add_subplot(gs[5, :])
 
     show_image(ax_img_1, original_image)
     ax_img_1.set_title("Original\n" + format_summary_for_title(original_summary))
@@ -412,12 +432,19 @@ def save_comparison_plot(
     ax_O.plot(k, scrambled_O, marker="o", label=f"{scramble_label} O = C Q")
     ax_O.plot(k, original_Odiv, marker="s", label="original Odiv = C Q D")
     ax_O.plot(k, scrambled_Odiv, marker="s", label=f"{scramble_label} Odiv = C Q D")
-    ax_O.plot(k, original_J, marker="^", label="original J")
-    ax_O.plot(k, scrambled_J, marker="^", label=f"{scramble_label} J")
     ax_O.set_xlabel("Scale index k")
     ax_O.set_ylabel("Profile value")
-    ax_O.set_title("Ordered, orientation-diverse, and scale-orientation profiles")
+    ax_O.set_title("Ordered and orientation-diverse organized MSSC")
     ax_O.legend()
+
+    ax_J.plot(k, original_Jglob, marker="^", label="original Jglob")
+    ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} Jglob")
+    ax_J.plot(k, original_Jloc, marker="d", label="original Jloc")
+    ax_J.plot(k, scrambled_Jloc, marker="d", label=f"{scramble_label} Jloc")
+    ax_J.set_xlabel("Scale index k")
+    ax_J.set_ylabel("J profile")
+    ax_J.set_title("Global vs local/nested scale-orientation entropy")
+    ax_J.legend()
 
     fig.tight_layout()
     fig.savefig(path, dpi=200)
@@ -429,15 +456,18 @@ def print_summary(name: str, summary: dict[str, float]) -> None:
     print(f"  C_total    = {summary['C_total']:.12g}")
     print(f"  O_total    = {summary['O_total']:.12g}")
     print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
-    print(f"  J_total    = {summary['J_total']:.12g}")
+    print(f"  Jglob_total = {summary['Jglob_total']:.12g}")
+    print(f"  Jloc_total  = {summary['Jloc_total']:.12g}")
     print(f"  H_C        = {summary['H_C']:.12g}")
     print(f"  H_O        = {summary['H_O']:.12g}")
     print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
-    print(f"  H_J        = {summary['H_J']:.12g}")
+    print(f"  H_Jglob    = {summary['H_Jglob']:.12g}")
+    print(f"  H_Jloc     = {summary['H_Jloc']:.12g}")
     print(f"  S_C        = {summary['S_C']:.12g}")
     print(f"  S_O        = {summary['S_O']:.12g}")
     print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
-    print(f"  S_J        = {summary['S_J']:.12g}")
+    print(f"  S_Jglob    = {summary['S_Jglob']:.12g}")
+    print(f"  S_Jloc     = {summary['S_Jloc']:.12g}")
     print(f"  Q_mean     = {summary['Q_mean']:.12g}")
     print(f"  D_mean     = {summary['D_mean']:.12g}")
 
@@ -472,7 +502,8 @@ def run_one_analysis(
         original_D,
         original_O,
         original_Odiv,
-        original_J,
+        original_Jglob,
+        original_Jloc,
         original_summary,
     ) = compute_all_profiles(
         image,
@@ -486,7 +517,8 @@ def run_one_analysis(
         scrambled_D,
         scrambled_O,
         scrambled_Odiv,
-        scrambled_J,
+        scrambled_Jglob,
+        scrambled_Jloc,
         scrambled_summary,
     ) = compute_all_profiles(
         scrambled,
@@ -505,18 +537,18 @@ def run_one_analysis(
 
     print(
         "k "
-        "original_C original_Q original_D original_O original_Odiv original_J "
-        "scrambled_C scrambled_Q scrambled_D scrambled_O scrambled_Odiv scrambled_J"
+        "original_C original_Q original_D original_O original_Odiv original_Jglob original_Jloc "
+        "scrambled_C scrambled_Q scrambled_D scrambled_O scrambled_Odiv scrambled_Jglob scrambled_Jloc"
     )
     for k in range(len(original_C)):
         print(
             f"{k} "
             f"{original_C[k]:.12g} {original_Q[k]:.12g} "
             f"{original_D[k]:.12g} {original_O[k]:.12g} {original_Odiv[k]:.12g} "
-            f"{original_J[k]:.12g} "
+            f"{original_Jglob[k]:.12g} {original_Jloc[k]:.12g} "
             f"{scrambled_C[k]:.12g} {scrambled_Q[k]:.12g} "
             f"{scrambled_D[k]:.12g} {scrambled_O[k]:.12g} {scrambled_Odiv[k]:.12g} "
-            f"{scrambled_J[k]:.12g}"
+            f"{scrambled_Jglob[k]:.12g} {scrambled_Jloc[k]:.12g}"
         )
 
     if out_csv is not None:
@@ -527,13 +559,15 @@ def run_one_analysis(
             original_D,
             original_O,
             original_Odiv,
-            original_J,
+            original_Jglob,
+            original_Jloc,
             scrambled_C,
             scrambled_Q,
             scrambled_D,
             scrambled_O,
             scrambled_Odiv,
-            scrambled_J,
+            scrambled_Jglob,
+            scrambled_Jloc,
         )
         print(f"Saved CSV: {out_csv}")
 
@@ -547,13 +581,15 @@ def run_one_analysis(
             original_D,
             original_O,
             original_Odiv,
-            original_J,
+            original_Jglob,
+            original_Jloc,
             scrambled_C,
             scrambled_Q,
             scrambled_D,
             scrambled_O,
             scrambled_Odiv,
-            scrambled_J,
+            scrambled_Jglob,
+            scrambled_Jloc,
             original_summary,
             scrambled_summary,
             scramble_label=scramble_label,

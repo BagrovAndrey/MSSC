@@ -13,7 +13,7 @@ matplotlib
 Run scripts from the repository root with:
 
 ```bash
-PYTHONPATH=. python scripts/...
+PYTHONPATH=. python3 scripts/...
 ```
 
 ## Current repository structure
@@ -31,6 +31,7 @@ mssc/
 
 scripts/
   compute_complexity.py
+  generate_toy_images.py
   visualize_layers.py
   shuffle_compare.py
 ```
@@ -38,13 +39,19 @@ scripts/
 Main experimental script:
 
 ```bash
-PYTHONPATH=. python scripts/shuffle_compare.py image.png \
+PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
   --mode grayscale \
   --scramble phase \
   --seed 123 \
   --out-plot result.png \
   --out-csv result.csv
 ```
+
+Current status note:
+
+- The repository has moved beyond the original `Odiv`-only stage.
+- `mssc/orientation.py` now also contains the global scale-orientation entropy profile `Jglob` and the local/nested profile `Jloc`.
+- The newer design intent for `Jglob` and `Jloc` is documented in the two dedicated Codex notes in the repository root.
 
 ## Core MSSC definition
 
@@ -362,6 +369,8 @@ This is a diagnostic mode only. It answers: what happens if absolute contrast am
    - `D_k`
    - `O_k`
    - `Odiv_k`
+   - `Jglob_k`
+   - `Jloc_k`
 5. Print summaries.
 6. Optionally save CSV.
 7. Optionally save plot.
@@ -395,6 +404,7 @@ row 2: C_k profiles
 row 3: Q_k profiles
 row 4: D_k profiles
 row 5: O_k and Odiv_k profiles
+row 6: Jglob_k and Jloc_k profiles
 ```
 
 CSV columns should include:
@@ -406,11 +416,15 @@ original_Q
 original_D
 original_O
 original_Odiv
+original_Jglob
+original_Jloc
 scrambled_C
 scrambled_Q
 scrambled_D
 scrambled_O
 scrambled_Odiv
+scrambled_Jglob
+scrambled_Jloc
 ```
 
 ## Scientific interpretation to preserve

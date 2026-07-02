@@ -257,19 +257,19 @@ source .venv/bin/activate
 Install dependencies:
 
 ```bash
-pip install numpy pillow matplotlib
+pip install -r requirements.txt
 ```
 
 Run scripts from the repository root with:
 
 ```bash
-PYTHONPATH=. python scripts/script_name.py ...
+PYTHONPATH=. python3 scripts/script_name.py ...
 ```
 
 ## Compute the naive MSSC profile
 
 ```bash
-PYTHONPATH=. python scripts/compute_complexity.py image.png \
+PYTHONPATH=. python3 scripts/compute_complexity.py image.png \
   --out-csv profile.csv \
   --out-plot profile.png
 ```
@@ -293,19 +293,35 @@ Optional arguments:
 ## Visualize coarse-graining layers
 
 ```bash
-PYTHONPATH=. python scripts/visualize_layers.py image.png \
+PYTHONPATH=. python3 scripts/visualize_layers.py image.png \
   --n-steps 6 \
   --out layers.png
 ```
 
 This shows the original image and successive coarse-grained layers.
 
+## Generate toy benchmark images
+
+```bash
+PYTHONPATH=. python3 scripts/generate_toy_images.py toy_images
+```
+
+This writes a small benchmark set:
+
+```text
+uniform
+noise
+stripes
+checkerboard
+multiscale
+```
+
 ## Compare original and scrambled images
 
 Tile shuffle:
 
 ```bash
-PYTHONPATH=. python scripts/shuffle_compare.py image.png \
+PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
   --scramble tile \
   --tile-size 32 \
   --seed 123 \
@@ -317,12 +333,20 @@ PYTHONPATH=. python scripts/shuffle_compare.py image.png \
 Phase scrambling:
 
 ```bash
-PYTHONPATH=. python scripts/shuffle_compare.py image.png \
+PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
   --scramble phase \
   --seed 123 \
   --out-plot comparison_phase.png \
   --out-csv comparison_phase.csv \
   --save-scrambled phase_scrambled_display.png
+```
+
+Optional analysis flags:
+
+```bash
+--normalize-intensity none
+--normalize-intensity minmax
+--compare-normalized
 ```
 
 The comparison plot shows:
@@ -334,21 +358,22 @@ scrambled image
 C_k profiles
 Q_k profiles
 D_k profiles
-O_k, Odiv_k, J_k profiles
+O_k and Odiv_k profiles
+Jglob_k and Jloc_k profiles
 ```
 
 The figure title reports cumulative values:
 
 ```text
-C, O, Odiv, J
+C, Odiv, Jglob, Jloc
 ```
 
 The CSV contains:
 
 ```text
 k,
-original_C, original_Q, original_D, original_O, original_Odiv, original_J,
-scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_J
+original_C, original_Q, original_D, original_O, original_Odiv, original_Jglob, original_Jloc,
+scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_Jglob, scrambled_Jloc
 ```
 
 ## Current file structure
@@ -365,6 +390,7 @@ mssc-image/
 
   scripts/
     compute_complexity.py
+    generate_toy_images.py
     visualize_layers.py
     shuffle_compare.py
 ```
@@ -373,7 +399,7 @@ mssc-image/
 
 The naive MSSC profile `C_k` is best interpreted as a scale-resolved residual-energy profile. It is closely related in spirit to a power spectrum, although the current implementation is based on real-space block coarse-graining rather than Fourier filtering.
 
-The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity, while `J_k` captures entropy contributions from the joint scale-orientation distribution. None of these should yet be treated as final definitions of structural complexity.
+The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity. `Jglob_k` captures entropy contributions from the global joint scale-orientation distribution, while `Jloc_k` is the newer local/nested variant intended to reward co-located multiscale organization rather than patchwork diversity. None of these should yet be treated as final definitions of structural complexity.
 
 A useful diagnostic is to compare:
 
@@ -383,7 +409,7 @@ tile-shuffled
 phase-scrambled
 ```
 
-If `C_k` is preserved but `O_k`, `Odiv_k`, or `J_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
+If `C_k` is preserved but `O_k`, `Odiv_k`, `Jglob_k`, or `Jloc_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
 
 ## Known limitations
 
@@ -396,7 +422,7 @@ Known limitations:
 
 2. Local orientation coherence is tied to this block coarse-graining.
 
-3. The current Q_k is signed and may underestimate natural images with curved, alternating, or sign-flipped structures.
+3. The current Q_k is nematic/sign-insensitive, but it is still a protocol-specific diagnostic tied to the present Haar/block construction.
 
 4. RGB images are treated as vector-valued arrays, but no color-space correction is performed.
 
@@ -410,16 +436,14 @@ Known limitations:
 Planned or natural next steps:
 
 ```text
-1. Replace signed orientation coherence with nematic/sign-insensitive coherence.
-
-2. Keep the core MSSC protocol-agnostic:
+1. Keep the core MSSC protocol-agnostic:
    coarse-graining + lifting + dissimilarity.
 
-3. Treat orientation coherence as a protocol-specific observable.
+2. Treat orientation coherence and the `Jglob` / `Jloc` diagnostics as protocol-specific observables.
 
-4. Add Fourier coarse-graining as an alternative observer.
+3. Add Fourier coarse-graining as an alternative observer.
 
-5. Add graph coarse-graining later for network complexity.
+4. Add graph coarse-graining later for network complexity.
 
-6. Add tests for constant images, white noise, periodic patterns, natural images, tile shuffle, and phase scramble.
+5. Add tests for constant images, white noise, periodic patterns, natural images, tile shuffle, and phase scramble.
 ```

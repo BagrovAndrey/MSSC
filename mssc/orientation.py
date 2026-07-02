@@ -196,6 +196,16 @@ def haar_channel_energy(image: np.ndarray) -> np.ndarray:
     return 0.5 * np.mean(h * h, axis=(0, 1))
 
 
+def haar_channel_energy_map(image: np.ndarray) -> np.ndarray:
+    """
+    Local Haar-channel energies on the RG-block grid for one image layer.
+
+    Returns E_{B,alpha} = 0.5 * h_{B,alpha}^2 with shape (L/2, L/2, d).
+    """
+    h = haar_detail_vectors(image)
+    return 0.5 * h * h
+
+
 def haar_channel_energy_profile(
     image: np.ndarray,
     n_steps: int | None = None,
@@ -219,6 +229,43 @@ def haar_channel_energy_profile(
         current = coarse_grain(current, block_size=2)
 
     return np.asarray(profile, dtype=float)
+
+
+def lifted_haar_channel_energy_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+) -> np.ndarray:
+    """
+    Per-scale Haar-channel energies lifted back to the original image grid.
+
+    For each RG layer f_k, the Haar-channel energy map on the 2x2 block grid is
+    repeated back to original-image resolution using nearest-neighbor lifting.
+    The output has shape (n_steps, L0, L0, d).
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    original_size = image.shape[0]
+    lifted_profile = []
+
+    for k in range(n_steps):
+        energy_map = haar_channel_energy_map(current)
+        factor = 2 ** (k + 1)
+        lifted = np.repeat(np.repeat(energy_map, factor, axis=0), factor, axis=1)
+
+        if lifted.shape[:2] != (original_size, original_size):
+            raise ValueError(
+                "lifted Haar channel energy map has incorrect shape: "
+                f"expected {(original_size, original_size)}, got {lifted.shape[:2]}"
+            )
+
+        lifted_profile.append(lifted)
+        current = coarse_grain(current, block_size=2)
+
+    return np.asarray(lifted_profile, dtype=float)
 
 
 def local_orientation_coherence_profile(
@@ -351,3 +398,48 @@ def scale_orientation_entropy_profile(
     J_terms[mask] = -W[mask] * np.log(P[mask])
 
     return np.sum(J_terms, axis=1)
+
+
+def local_scale_orientation_entropy_profile(
+    lifted_channel_energy_profile: np.ndarray,
+    coherence_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Local/nested entropy contribution profile over scale-orientation channels.
+
+    For lifted local ordered channel weights W_{k,alpha}(x), this returns
+
+        Jloc_k = - mean_x sum_alpha W_{k,alpha}(x) log(W_{k,alpha}(x) / W_tot(x)),
+
+    where W_tot(x) sums over all scales and Haar channels at x.
+    """
+    E = np.asarray(lifted_channel_energy_profile, dtype=float)
+    Q = np.asarray(coherence_profile, dtype=float)
+
+    if E.ndim != 4:
+        raise ValueError("lifted_channel_energy_profile must have shape (n_steps, L, L, d)")
+    if Q.ndim != 1:
+        raise ValueError("coherence_profile must have shape (n_steps,)")
+    if E.shape[0] != Q.shape[0]:
+        raise ValueError("lifted_channel_energy_profile and coherence_profile must agree on n_steps")
+
+    W = E * np.maximum(Q, 0.0)[:, None, None, None]
+    Wtot = np.sum(W, axis=(0, 3))
+
+    Jloc = np.zeros(E.shape[0], dtype=float)
+    valid_points = Wtot > eps
+
+    if not np.any(valid_points):
+        return Jloc
+
+    for k in range(E.shape[0]):
+        ratio = np.zeros_like(W[k])
+        np.divide(W[k], Wtot[..., None], out=ratio, where=valid_points[..., None])
+
+        terms = np.zeros_like(W[k])
+        mask = (W[k] > eps) & valid_points[..., None]
+        terms[mask] = -W[k][mask] * np.log(ratio[mask])
+        Jloc[k] = float(np.mean(np.sum(terms, axis=-1)))
+
+    return Jloc

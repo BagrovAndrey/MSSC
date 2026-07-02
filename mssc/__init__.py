@@ -12,7 +12,16 @@ from .visualize import rg_layers, plot_rg_layers
 from .shuffle import tile_shuffle, phase_scramble, power_spectrum
 from .orientation import (
     haar_detail_vectors,
+    haar_channel_energy,
+    haar_channel_energy_map,
+    haar_channel_energy_profile,
+    lifted_haar_channel_energy_profile,
     local_orientation_coherence,
     local_orientation_coherence_profile,
+    orientation_entropy,
+    orientation_entropy_profile,
     organized_profile,
+    orientation_diverse_organized_profile,
+    scale_orientation_entropy_profile,
+    local_scale_orientation_entropy_profile,
 )
