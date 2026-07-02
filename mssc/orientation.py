@@ -2,61 +2,51 @@ from __future__ import annotations
 
 import numpy as np
 
-from .complexity import coarse_grain, max_steps, validate_image
+from mssc.complexity import coarse_grain, max_steps, validate_image
 
 
 def haar_detail_vectors(image: np.ndarray) -> np.ndarray:
     """
-    Compute local Haar detail vectors for all 2x2 blocks.
+    Compute local Haar-like detail vectors for non-overlapping 2x2 blocks.
 
-    For scalar image:
-        output shape: (L/2, L/2, 3)
+    For a scalar block
 
-    For vector/RGB image:
-        output shape: (L/2, L/2, 3*C)
+        [[a, b],
+         [c, d]]
 
-    The three Haar channels are:
-        h_x  : left-right contrast
-        h_y  : top-bottom contrast
-        h_xy : diagonal/checkerboard contrast
+    the three detail channels are
+
+        h_x  = (a + c - b - d) / 4
+        h_y  = (a + b - c - d) / 4
+        h_xy = (a - b - c + d) / 4
+
+    For grayscale input, the output has shape (L/2, L/2, 3).
+    For RGB/vector input, the output has shape (L/2, L/2, 3*C).
     """
     validate_image(image)
 
-    L = image.shape[0]
+    img = np.asarray(image, dtype=float)
+    L = img.shape[0]
+
     if L % 2 != 0:
         raise ValueError("image size must be divisible by 2")
 
-    n = L // 2
-    img = np.asarray(image, dtype=float)
-
-    if img.ndim == 2:
-        blocks = img.reshape(n, 2, n, 2).swapaxes(1, 2)
-
-        a = blocks[:, :, 0, 0]
-        b = blocks[:, :, 0, 1]
-        c = blocks[:, :, 1, 0]
-        d = blocks[:, :, 1, 1]
-
-        h_x = (a + c - b - d) / 4.0
-        h_y = (a + b - c - d) / 4.0
-        h_xy = (a - b - c + d) / 4.0
-
-        return np.stack([h_x, h_y, h_xy], axis=-1)
-
-    channels = img.shape[-1]
-    blocks = img.reshape(n, 2, n, 2, channels).swapaxes(1, 2)
-
-    a = blocks[:, :, 0, 0, :]
-    b = blocks[:, :, 0, 1, :]
-    c = blocks[:, :, 1, 0, :]
-    d = blocks[:, :, 1, 1, :]
+    a = img[0::2, 0::2]
+    b = img[0::2, 1::2]
+    c = img[1::2, 0::2]
+    d = img[1::2, 1::2]
 
     h_x = (a + c - b - d) / 4.0
     h_y = (a + b - c - d) / 4.0
     h_xy = (a - b - c + d) / 4.0
 
+    if img.ndim == 2:
+        return np.stack([h_x, h_y, h_xy], axis=-1)
+
+    # RGB/vector image: concatenate Haar channels for all color channels.
+    # Shape before reshape: (L/2, L/2, 3, C)
     h = np.stack([h_x, h_y, h_xy], axis=-2)
-    return h.reshape(n, n, 3 * channels)
+    return h.reshape(h.shape[0], h.shape[1], -1)
 
 
 def local_orientation_coherence_from_h(
@@ -64,77 +54,134 @@ def local_orientation_coherence_from_h(
     eps: float = 1e-12,
 ) -> float:
     """
-    Compute energy-weighted nearest-neighbor nematic coherence
-    of local Haar detail vectors.
+    Energy-weighted local nematic coherence of Haar-detail directions.
 
-    h has shape (n, n, d), where d=3 for scalar images and d=3*C for RGB.
-
-    The coherence is based on squared dot products:
-
-        q = <(h_hat_B dot h_hat_B')^2>_weighted
-
-    For random unit vectors in d dimensions, the expected value is 1/d.
-    We subtract this baseline and normalize so that:
-
-        Q = 0  for random orientations
-        Q = 1  for perfectly aligned or anti-aligned orientations
-
-    If there is essentially no detail energy, returns 0.
+    The sign of the Haar vector is ignored via (u_B dot u_B')^2.
+    Random directions give approximately zero after subtracting the
+    isotropic baseline 1/d.
     """
+    h = np.asarray(h, dtype=float)
+
     if h.ndim != 3:
         raise ValueError("h must have shape (n, n, d)")
 
-    d = h.shape[-1]
-    if d <= 0:
-        raise ValueError("last dimension of h must be positive")
-
     energy = np.sum(h * h, axis=-1)
+    total_energy = float(np.sum(energy))
 
-    if float(energy.sum()) <= eps:
+    if total_energy <= eps:
         return 0.0
 
-    norm = np.sqrt(energy + eps)
-    unit = h / norm[..., None]
+    d = h.shape[-1]
+    unit = h / np.sqrt(energy + eps)[..., None]
 
-    numerator = 0.0
-    denominator = 0.0
+    values = []
+    weights = []
 
-    # Horizontal neighboring block pairs.
-    dot_x = np.sum(unit[:, :-1, :] * unit[:, 1:, :], axis=-1)
-    w_x = np.sqrt(energy[:, :-1] * energy[:, 1:])
-    numerator += float(np.sum(w_x * dot_x * dot_x))
-    denominator += float(np.sum(w_x))
+    # Horizontal neighboring pairs.
+    if h.shape[1] > 1:
+        dot_x = np.sum(unit[:, :-1, :] * unit[:, 1:, :], axis=-1)
+        w_x = np.sqrt(energy[:, :-1] * energy[:, 1:])
+        values.append(dot_x * dot_x)
+        weights.append(w_x)
 
-    # Vertical neighboring block pairs.
-    dot_y = np.sum(unit[:-1, :, :] * unit[1:, :, :], axis=-1)
-    w_y = np.sqrt(energy[:-1, :] * energy[1:, :])
-    numerator += float(np.sum(w_y * dot_y * dot_y))
-    denominator += float(np.sum(w_y))
+    # Vertical neighboring pairs.
+    if h.shape[0] > 1:
+        dot_y = np.sum(unit[:-1, :, :] * unit[1:, :, :], axis=-1)
+        w_y = np.sqrt(energy[:-1, :] * energy[1:, :])
+        values.append(dot_y * dot_y)
+        weights.append(w_y)
 
-    if denominator <= eps:
+    if not values:
         return 0.0
 
-    mean_dot2 = numerator / denominator
+    value = np.concatenate([v.ravel() for v in values])
+    weight = np.concatenate([w.ravel() for w in weights])
 
-    # Random-orientation baseline in d dimensions.
+    weight_sum = float(np.sum(weight))
+    if weight_sum <= eps:
+        return 0.0
+
+    mean_dot2 = float(np.sum(weight * value) / weight_sum)
+
     baseline = 1.0 / d
+    coherence = (mean_dot2 - baseline) / (1.0 - baseline)
 
-    # Normalize baseline -> 0, perfect nematic alignment -> 1.
-    Q = (mean_dot2 - baseline) / (1.0 - baseline)
-
-    # Small negative values are expected from finite-size fluctuations.
-    return float(max(Q, 0.0))
+    return float(max(coherence, 0.0))
 
 
 def local_orientation_coherence(
     image: np.ndarray,
     eps: float = 1e-12,
 ) -> float:
-    """
-    Compute Q for one image scale.
-    """
     h = haar_detail_vectors(image)
     return local_orientation_coherence_from_h(h, eps=eps)
+
+
+def orientation_entropy_from_h(
+    h: np.ndarray,
+    eps: float = 1e-12,
+) -> float:
+    """
+    Energy-weighted entropy of Haar-detail directions.
+
+    Construct the orientation tensor
+
+        M = sum_B e_B u_B u_B^T / sum_B e_B,
+
+    where
+
+        e_B = |h_B|^2,
+        u_B = h_B / |h_B|.
+
+    The normalized entropy of the eigenvalues of M is returned.
+
+    Interpretation:
+        0: all strong details point in essentially one Haar direction.
+        1: strong details occupy Haar-detail space isotropically.
+    """
+    h = np.asarray(h, dtype=float)
+
+    if h.ndim != 3:
+        raise ValueError("h must have shape (n, n, d)")
+
+    d = h.shape[-1]
+    flat = h.reshape(-1, d)
+
+    energy = np.sum(flat * flat, axis=-1)
+    total_energy = float(np.sum(energy))
+
+    if total_energy <= eps:
+        return 0.0
+
+    # Because e_B u_B u_B^T = h_B h_B^T, this is the normalized
+    # second-moment tensor of Haar-detail vectors.
+    M = (flat.T @ flat) / total_energy
+
+    eigvals = np.linalg.eigvalsh(M)
+    eigvals = np.clip(eigvals, 0.0, None)
+
+    norm = float(np.sum(eigvals))
+    if norm <= eps:
+        return 0.0
+
+    eigvals = eigvals / norm
+    eigvals = eigvals[eigvals > eps]
+
+    if len(eigvals) == 0 or d <= 1:
+        return 0.0
+
+    entropy = -float(np.sum(eigvals * np.log(eigvals)))
+    entropy /= np.log(d)
+
+    return float(entropy)
+
+
+def orientation_entropy(
+    image: np.ndarray,
+    eps: float = 1e-12,
+) -> float:
+    h = haar_detail_vectors(image)
+    return orientation_entropy_from_h(h, eps=eps)
 
 
 def local_orientation_coherence_profile(
@@ -143,38 +190,48 @@ def local_orientation_coherence_profile(
     eps: float = 1e-12,
 ) -> np.ndarray:
     """
-    Compute Q_k for all RG scales.
+    Compute Q_k for each RG layer f_k.
 
-    Currently this is defined for the same 2x2 block coarse-graining
-    as the minimal MSSC implementation.
-
-    Q_k is computed from the Haar detail vectors inside 2x2 blocks
-    of f_k, then f_k is coarse-grained to f_{k+1}.
+    This is currently defined only for 2x2 block coarse-graining.
     """
     validate_image(image)
 
-    img = np.asarray(image, dtype=float)
-    L = img.shape[0]
-
-    max_n = max_steps(L, block_size=2)
-
     if n_steps is None:
-        n_steps = max_n
+        n_steps = max_steps(image.shape[0], block_size=2)
 
-    if n_steps > max_n:
-        raise ValueError(
-            f"n_steps={n_steps} is too large for image size {L}; "
-            f"maximum is {max_n}"
-        )
-
-    values = []
-    current = img
+    current = np.asarray(image, dtype=float)
+    profile = []
 
     for _ in range(n_steps):
-        values.append(local_orientation_coherence(current, eps=eps))
+        profile.append(local_orientation_coherence(current, eps=eps))
         current = coarse_grain(current, block_size=2)
 
-    return np.asarray(values, dtype=float)
+    return np.asarray(profile, dtype=float)
+
+
+def orientation_entropy_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """
+    Compute D_k = H_orient,k for each RG layer f_k.
+
+    D_k measures diversity of strong local Haar-detail directions.
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    profile = []
+
+    for _ in range(n_steps):
+        profile.append(orientation_entropy(current, eps=eps))
+        current = coarse_grain(current, block_size=2)
+
+    return np.asarray(profile, dtype=float)
 
 
 def organized_profile(
@@ -182,12 +239,36 @@ def organized_profile(
     coherence_profile: np.ndarray,
 ) -> np.ndarray:
     """
-    Compute O_k = C_k * max(Q_k, 0).
+    Old diagnostic: ordered contrast energy.
+
+        O_k = C_k max(Q_k, 0)
     """
     C = np.asarray(complexity_profile, dtype=float)
     Q = np.asarray(coherence_profile, dtype=float)
 
     if C.shape != Q.shape:
-        raise ValueError("complexity_profile and coherence_profile must have the same shape")
+        raise ValueError("complexity_profile and coherence_profile must have same shape")
 
     return C * np.maximum(Q, 0.0)
+
+
+def orientation_diverse_organized_profile(
+    complexity_profile: np.ndarray,
+    coherence_profile: np.ndarray,
+    orientation_entropy_profile: np.ndarray,
+) -> np.ndarray:
+    """
+    Orientation-diverse organized complexity.
+
+        O_div,k = C_k max(Q_k, 0) D_k
+
+    where D_k is the normalized entropy of Haar-detail directions.
+    """
+    C = np.asarray(complexity_profile, dtype=float)
+    Q = np.asarray(coherence_profile, dtype=float)
+    D = np.asarray(orientation_entropy_profile, dtype=float)
+
+    if C.shape != Q.shape or C.shape != D.shape:
+        raise ValueError("C, Q, and D profiles must have the same shape")
+
+    return C * np.maximum(Q, 0.0) * D

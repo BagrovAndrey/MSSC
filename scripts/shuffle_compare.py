@@ -9,7 +9,12 @@ import numpy as np
 
 from mssc.complexity import complexity_profile
 from mssc.image_io import load_image, save_image
-from mssc.orientation import local_orientation_coherence_profile, organized_profile
+from mssc.orientation import (
+    local_orientation_coherence_profile,
+    orientation_diverse_organized_profile,
+    orientation_entropy_profile,
+    organized_profile,
+)
 from mssc.shuffle import phase_scramble, tile_shuffle
 
 
@@ -78,7 +83,6 @@ def normalize_intensity(
     if vmax - vmin <= eps:
         return np.zeros_like(img)
 
-    # Preserve the convention already used by load_image.
     if vmin < 0:
         out_min, out_max = -1.0, 1.0
     else:
@@ -90,15 +94,28 @@ def normalize_intensity(
     return normalized
 
 
-def summarize_profiles(C: np.ndarray, Q: np.ndarray, O: np.ndarray) -> dict[str, float]:
+def summarize_profiles(
+    C: np.ndarray,
+    Q: np.ndarray,
+    D: np.ndarray,
+    O: np.ndarray,
+    Odiv: np.ndarray,
+) -> dict[str, float]:
     return {
         "C_total": float(np.sum(C)),
         "O_total": float(np.sum(O)),
+        "Odiv_total": float(np.sum(Odiv)),
+
         "H_C": profile_entropy(C),
         "H_O": profile_entropy(O),
+        "H_Odiv": profile_entropy(Odiv),
+
         "S_C": entropic_complexity(C),
         "S_O": entropic_complexity(O),
+        "S_Odiv": entropic_complexity(Odiv),
+
         "Q_mean": float(np.mean(Q)) if len(Q) else 0.0,
+        "D_mean": float(np.mean(D)) if len(D) else 0.0,
     }
 
 
@@ -114,7 +131,7 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="'auto', integer size, or 'none'. Default: auto",
     )
-    parser.add_argument("--mode", choices=["rgb", "grayscale"], default="rgb")
+    parser.add_argument("--mode", choices=["rgb", "grayscale"], default="grayscale")
     parser.add_argument(
         "--value-range",
         choices=["0_1", "minus1_1"],
@@ -219,10 +236,10 @@ def compute_all_profiles(
     image: np.ndarray,
     block_size: int = 2,
     n_steps: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
     if block_size != 2:
         raise ValueError(
-            "Orientation coherence is currently implemented only for block_size=2"
+            "Orientation observables are currently implemented only for block_size=2"
         )
 
     C = complexity_profile(
@@ -236,21 +253,31 @@ def compute_all_profiles(
         n_steps=n_steps,
     )
 
+    D = orientation_entropy_profile(
+        image,
+        n_steps=n_steps,
+    )
+
     O = organized_profile(C, Q)
+    Odiv = orientation_diverse_organized_profile(C, Q, D)
 
-    summary = summarize_profiles(C, Q, O)
+    summary = summarize_profiles(C, Q, D, O, Odiv)
 
-    return C, Q, O, summary
+    return C, Q, D, O, Odiv, summary
 
 
 def save_csv(
     path: Path,
     original_C: np.ndarray,
     original_Q: np.ndarray,
+    original_D: np.ndarray,
     original_O: np.ndarray,
+    original_Odiv: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
+    scrambled_D: np.ndarray,
     scrambled_O: np.ndarray,
+    scrambled_Odiv: np.ndarray,
 ) -> None:
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
@@ -259,10 +286,14 @@ def save_csv(
                 "k",
                 "original_C",
                 "original_Q",
+                "original_D",
                 "original_O",
+                "original_Odiv",
                 "scrambled_C",
                 "scrambled_Q",
+                "scrambled_D",
                 "scrambled_O",
+                "scrambled_Odiv",
             ]
         )
 
@@ -272,10 +303,14 @@ def save_csv(
                     k,
                     original_C[k],
                     original_Q[k],
+                    original_D[k],
                     original_O[k],
+                    original_Odiv[k],
                     scrambled_C[k],
                     scrambled_Q[k],
+                    scrambled_D[k],
                     scrambled_O[k],
+                    scrambled_Odiv[k],
                 ]
             )
 
@@ -284,8 +319,8 @@ def format_summary_for_title(summary: dict[str, float]) -> str:
     return (
         f"C={summary['C_total']:.4g}, "
         f"O={summary['O_total']:.4g}\n"
-        f"S_C={summary['S_C']:.4g}, "
-        f"S_O={summary['S_O']:.4g}"
+        f"Odiv={summary['Odiv_total']:.4g}, "
+        f"S_Odiv={summary['S_Odiv']:.4g}"
     )
 
 
@@ -295,10 +330,14 @@ def save_comparison_plot(
     scrambled_image: np.ndarray,
     original_C: np.ndarray,
     original_Q: np.ndarray,
+    original_D: np.ndarray,
     original_O: np.ndarray,
+    original_Odiv: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
+    scrambled_D: np.ndarray,
     scrambled_O: np.ndarray,
+    scrambled_Odiv: np.ndarray,
     original_summary: dict[str, float],
     scrambled_summary: dict[str, float],
     scramble_label: str,
@@ -306,15 +345,16 @@ def save_comparison_plot(
 ) -> None:
     k = np.arange(len(original_C))
 
-    fig = plt.figure(figsize=(11, 10))
-    gs = fig.add_gridspec(4, 2, height_ratios=[1.15, 0.75, 0.75, 0.75])
+    fig = plt.figure(figsize=(11, 12))
+    gs = fig.add_gridspec(5, 2, height_ratios=[1.15, 0.7, 0.7, 0.7, 0.7])
 
     ax_img_1 = fig.add_subplot(gs[0, 0])
     ax_img_2 = fig.add_subplot(gs[0, 1])
 
     ax_C = fig.add_subplot(gs[1, :])
     ax_Q = fig.add_subplot(gs[2, :])
-    ax_O = fig.add_subplot(gs[3, :])
+    ax_D = fig.add_subplot(gs[3, :])
+    ax_O = fig.add_subplot(gs[4, :])
 
     show_image(ax_img_1, original_image)
     ax_img_1.set_title("Original\n" + format_summary_for_title(original_summary))
@@ -339,11 +379,19 @@ def save_comparison_plot(
     ax_Q.set_title("Local orientation coherence")
     ax_Q.legend()
 
-    ax_O.plot(k, original_O, marker="o", label="original")
-    ax_O.plot(k, scrambled_O, marker="o", label=scramble_label)
+    ax_D.plot(k, original_D, marker="o", label="original")
+    ax_D.plot(k, scrambled_D, marker="o", label=scramble_label)
+    ax_D.set_ylabel("D_k")
+    ax_D.set_title("Orientation entropy / diversity")
+    ax_D.legend()
+
+    ax_O.plot(k, original_O, marker="o", label="original O = C Q")
+    ax_O.plot(k, scrambled_O, marker="o", label=f"{scramble_label} O = C Q")
+    ax_O.plot(k, original_Odiv, marker="s", label="original Odiv = C Q D")
+    ax_O.plot(k, scrambled_Odiv, marker="s", label=f"{scramble_label} Odiv = C Q D")
     ax_O.set_xlabel("Scale index k")
     ax_O.set_ylabel("O_k")
-    ax_O.set_title("Organized MSSC profile: O_k = C_k max(Q_k, 0)")
+    ax_O.set_title("Ordered vs orientation-diverse organized MSSC")
     ax_O.legend()
 
     fig.tight_layout()
@@ -353,13 +401,17 @@ def save_comparison_plot(
 
 def print_summary(name: str, summary: dict[str, float]) -> None:
     print(name)
-    print(f"  C_total = {summary['C_total']:.12g}")
-    print(f"  O_total = {summary['O_total']:.12g}")
-    print(f"  H_C     = {summary['H_C']:.12g}")
-    print(f"  H_O     = {summary['H_O']:.12g}")
-    print(f"  S_C     = {summary['S_C']:.12g}")
-    print(f"  S_O     = {summary['S_O']:.12g}")
-    print(f"  Q_mean  = {summary['Q_mean']:.12g}")
+    print(f"  C_total    = {summary['C_total']:.12g}")
+    print(f"  O_total    = {summary['O_total']:.12g}")
+    print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
+    print(f"  H_C        = {summary['H_C']:.12g}")
+    print(f"  H_O        = {summary['H_O']:.12g}")
+    print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
+    print(f"  S_C        = {summary['S_C']:.12g}")
+    print(f"  S_O        = {summary['S_O']:.12g}")
+    print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
+    print(f"  Q_mean     = {summary['Q_mean']:.12g}")
+    print(f"  D_mean     = {summary['D_mean']:.12g}")
 
 
 def add_suffix(path: Path, suffix: str) -> Path:
@@ -386,13 +438,27 @@ def run_one_analysis(
         seed=args.seed,
     )
 
-    original_C, original_Q, original_O, original_summary = compute_all_profiles(
+    (
+        original_C,
+        original_Q,
+        original_D,
+        original_O,
+        original_Odiv,
+        original_summary,
+    ) = compute_all_profiles(
         image,
         block_size=args.block_size,
         n_steps=args.n_steps,
     )
 
-    scrambled_C, scrambled_Q, scrambled_O, scrambled_summary = compute_all_profiles(
+    (
+        scrambled_C,
+        scrambled_Q,
+        scrambled_D,
+        scrambled_O,
+        scrambled_Odiv,
+        scrambled_summary,
+    ) = compute_all_profiles(
         scrambled,
         block_size=args.block_size,
         n_steps=args.n_steps,
@@ -407,12 +473,18 @@ def run_one_analysis(
     print_summary("Scrambled:", scrambled_summary)
     print()
 
-    print("k original_C original_Q original_O scrambled_C scrambled_Q scrambled_O")
+    print(
+        "k "
+        "original_C original_Q original_D original_O original_Odiv "
+        "scrambled_C scrambled_Q scrambled_D scrambled_O scrambled_Odiv"
+    )
     for k in range(len(original_C)):
         print(
             f"{k} "
-            f"{original_C[k]:.12g} {original_Q[k]:.12g} {original_O[k]:.12g} "
-            f"{scrambled_C[k]:.12g} {scrambled_Q[k]:.12g} {scrambled_O[k]:.12g}"
+            f"{original_C[k]:.12g} {original_Q[k]:.12g} "
+            f"{original_D[k]:.12g} {original_O[k]:.12g} {original_Odiv[k]:.12g} "
+            f"{scrambled_C[k]:.12g} {scrambled_Q[k]:.12g} "
+            f"{scrambled_D[k]:.12g} {scrambled_O[k]:.12g} {scrambled_Odiv[k]:.12g}"
         )
 
     if out_csv is not None:
@@ -420,10 +492,14 @@ def run_one_analysis(
             out_csv,
             original_C,
             original_Q,
+            original_D,
             original_O,
+            original_Odiv,
             scrambled_C,
             scrambled_Q,
+            scrambled_D,
             scrambled_O,
+            scrambled_Odiv,
         )
         print(f"Saved CSV: {out_csv}")
 
@@ -434,10 +510,14 @@ def run_one_analysis(
             scrambled,
             original_C,
             original_Q,
+            original_D,
             original_O,
+            original_Odiv,
             scrambled_C,
             scrambled_Q,
+            scrambled_D,
             scrambled_O,
+            scrambled_Odiv,
             original_summary,
             scrambled_summary,
             scramble_label=scramble_label,
