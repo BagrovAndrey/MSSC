@@ -49,7 +49,7 @@ and the total naive MSSC is
 C = sum_k C_k
 ```
 
-## Current experimental extension: local orientation coherence
+## Current experimental extensions: orientation-aware profiles
 
 The repository also contains an experimental phase/organization-sensitive extension.
 
@@ -78,7 +78,7 @@ h_xy = (a - b - c + d) / 4
 
 For RGB images, the same construction is applied channel-wise and concatenated into one local detail vector.
 
-The current local orientation coherence profile is
+The local orientation coherence profile is
 
 ```text
 Q_k
@@ -86,19 +86,43 @@ Q_k
 
 where `Q_k` measures energy-weighted signed alignment of local Haar detail vectors between neighboring blocks at scale `k`.
 
-The organized MSSC profile is then defined as
+The organized MSSC profile is
 
 ```text
 O_k = C_k * max(Q_k, 0)
 ```
 
-and the total organized MSSC is
+The code also computes the within-scale orientation entropy profile
 
 ```text
-O = sum_k O_k
+D_k
 ```
 
-Important: this definition is experimental. In particular, the current signed coherence may strongly suppress natural images with curved or alternating local structures. A future version may replace it with a nematic/sign-insensitive coherence based on squared local alignment.
+where `D_k` measures how broadly the local Haar detail energy is spread across Haar channels at a fixed scale.
+
+The orientation-diverse organized profile is
+
+```text
+Odiv_k = C_k * max(Q_k, 0) * D_k
+```
+
+Finally, the comparison script computes a scale-orientation entropy contribution profile
+
+```text
+J_k
+```
+
+based on ordered Haar-channel energies across both scale and orientation channels.
+
+The corresponding totals include
+
+```text
+O    = sum_k O_k
+Odiv = sum_k Odiv_k
+J    = sum_k J_k
+```
+
+Important: these definitions are experimental diagnostics. `Q_k`, `D_k`, `Odiv_k`, and `J_k` should be compared across controlled examples rather than overinterpreted as final complexity measures.
 
 ## Entropic summaries over scales
 
@@ -127,12 +151,18 @@ The comparison script reports:
 ```text
 C     = sum_k C_k
 O     = sum_k O_k
+Odiv  = sum_k Odiv_k
+J     = sum_k J_k
 
 H_C   = entropy of normalized C_k
 H_O   = entropy of normalized O_k
+H_Odiv
+H_J
 
 S_C   = C * H_C
 S_O   = O * H_O
+S_Odiv
+S_J
 ```
 
 Interpretation:
@@ -147,10 +177,19 @@ Q_k:
 O_k:
   organized residual energy
 
-H_C, H_O:
+D_k:
+  within-scale orientation diversity
+
+Odiv_k:
+  organized energy weighted by within-scale orientation diversity
+
+J_k:
+  entropy contribution of ordered scale-orientation channel weights
+
+H_C, H_O, H_Odiv, H_J:
   how broadly the corresponding profile is distributed across scales
 
-S_C, S_O:
+S_C, S_O, S_Odiv, S_J:
   total amount of structure weighted by its multiscale spread
 ```
 
@@ -165,7 +204,7 @@ By default, images are resized to a square whose size is the nearest power of tw
 600 x 600  -> 512 x 512
 ```
 
-This is controlled by the command-line argument:
+This is the default behavior of the scripts and of `load_image(...)`. It is controlled by the command-line argument:
 
 ```bash
 --size auto
@@ -175,7 +214,7 @@ Other options:
 
 ```bash
 --size 1024   # force 1024 x 1024
---size none   # do not resize; image must already be square
+--size none   # do not resize; image must already be square and power-of-two
 ```
 
 Pixel values are converted once from `uint8` to either `[0, 1]` or `[-1, 1]`.
@@ -294,21 +333,22 @@ scrambled image
 
 C_k profiles
 Q_k profiles
-O_k profiles
+D_k profiles
+O_k, Odiv_k, J_k profiles
 ```
 
 The figure title reports cumulative values:
 
 ```text
-C, O, S_C, S_O
+C, O, Odiv, J
 ```
 
 The CSV contains:
 
 ```text
 k,
-original_C, original_Q, original_O,
-scrambled_C, scrambled_Q, scrambled_O
+original_C, original_Q, original_D, original_O, original_Odiv, original_J,
+scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_J
 ```
 
 ## Current file structure
@@ -333,7 +373,7 @@ mssc-image/
 
 The naive MSSC profile `C_k` is best interpreted as a scale-resolved residual-energy profile. It is closely related in spirit to a power spectrum, although the current implementation is based on real-space block coarse-graining rather than Fourier filtering.
 
-The organized profile `O_k` is an experimental attempt to include local organization of details. It should not yet be treated as a final definition of structural complexity.
+The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity, while `J_k` captures entropy contributions from the joint scale-orientation distribution. None of these should yet be treated as final definitions of structural complexity.
 
 A useful diagnostic is to compare:
 
@@ -343,7 +383,7 @@ tile-shuffled
 phase-scrambled
 ```
 
-If `C_k` is preserved but `O_k` is suppressed, the transformation preserves scale energy while destroying local organization.
+If `C_k` is preserved but `O_k`, `Odiv_k`, or `J_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
 
 ## Known limitations
 

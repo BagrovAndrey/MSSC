@@ -184,6 +184,43 @@ def orientation_entropy(
     return orientation_entropy_from_h(h, eps=eps)
 
 
+def haar_channel_energy(image: np.ndarray) -> np.ndarray:
+    """
+    Per-channel Haar detail energies for one RG layer.
+
+    Returns E_alpha = 0.5 * mean_B h_alpha^2 over non-overlapping 2x2 blocks.
+    For grayscale images this has length 3; for RGB/vector images it has
+    length 3 * C after channel concatenation.
+    """
+    h = haar_detail_vectors(image)
+    return 0.5 * np.mean(h * h, axis=(0, 1))
+
+
+def haar_channel_energy_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+) -> np.ndarray:
+    """
+    Per-scale Haar detail channel energies E_{k,alpha}.
+
+    The returned array has shape (n_steps, d), where d is the Haar-detail
+    dimension of one RG layer.
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    profile = []
+
+    for _ in range(n_steps):
+        profile.append(haar_channel_energy(current))
+        current = coarse_grain(current, block_size=2)
+
+    return np.asarray(profile, dtype=float)
+
+
 def local_orientation_coherence_profile(
     image: np.ndarray,
     n_steps: int | None = None,
@@ -272,3 +309,45 @@ def orientation_diverse_organized_profile(
         raise ValueError("C, Q, and D profiles must have the same shape")
 
     return C * np.maximum(Q, 0.0) * D
+
+
+def scale_orientation_entropy_profile(
+    channel_energy_profile: np.ndarray,
+    coherence_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Entropy contribution profile over the joint scale-orientation distribution.
+
+    For channel energies E_{k,alpha} and local coherence Q_k, define
+
+        W_{k,alpha} = max(Q_k, 0) E_{k,alpha}.
+
+    This function returns
+
+        J_k = - sum_alpha W_{k,alpha} log(W_{k,alpha} / W_tot),
+
+    with zero-weight entries contributing zero.
+    """
+    E = np.asarray(channel_energy_profile, dtype=float)
+    Q = np.asarray(coherence_profile, dtype=float)
+
+    if E.ndim != 2:
+        raise ValueError("channel_energy_profile must have shape (n_steps, d)")
+    if Q.ndim != 1:
+        raise ValueError("coherence_profile must have shape (n_steps,)")
+    if E.shape[0] != Q.shape[0]:
+        raise ValueError("channel_energy_profile and coherence_profile must agree on n_steps")
+
+    W = E * np.maximum(Q, 0.0)[:, None]
+    W_tot = float(np.sum(W))
+
+    if W_tot <= eps:
+        return np.zeros(E.shape[0], dtype=float)
+
+    P = W / W_tot
+    J_terms = np.zeros_like(W)
+    mask = P > eps
+    J_terms[mask] = -W[mask] * np.log(P[mask])
+
+    return np.sum(J_terms, axis=1)

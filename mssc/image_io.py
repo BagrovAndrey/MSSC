@@ -6,6 +6,16 @@ import numpy as np
 from PIL import Image
 
 
+if hasattr(Image, "Resampling"):
+    BICUBIC = Image.Resampling.BICUBIC
+else:
+    BICUBIC = Image.BICUBIC
+
+
+def is_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
 def nearest_power_of_two(n: int) -> int:
     """
     Return the power of two closest to n.
@@ -37,7 +47,7 @@ def auto_square_size(width: int, height: int) -> int:
 def load_image(
     path: str | Path,
     size: int | str | None = "auto",
-    mode: str = "rgb",
+    mode: str = "grayscale",
     value_range: str = "minus1_1",
 ) -> np.ndarray:
     """
@@ -46,7 +56,7 @@ def load_image(
     size:
       - "auto": resize to nearest power of two based on max(width, height)
       - int: resize to (size, size)
-      - None: keep original size, but require the image to be already square
+      - None: do not resize; require a square power-of-two image
 
     mode:
       - "rgb": return shape (L, L, 3)
@@ -83,7 +93,7 @@ def load_image(
             target_size = auto_square_size(width, height)
             img = img.resize(
                 (target_size, target_size),
-                resample=Image.Resampling.BICUBIC,
+                resample=BICUBIC,
             )
 
         elif isinstance(size, int):
@@ -91,14 +101,23 @@ def load_image(
                 raise ValueError("size must be positive")
             img = img.resize(
                 (size, size),
-                resample=Image.Resampling.BICUBIC,
+                resample=BICUBIC,
             )
 
         elif size is None:
             if width != height:
                 raise ValueError(
-                    "size=None requires an already square image; "
-                    f"got {width}x{height}"
+                    "size=None requires an already square image with no resizing; "
+                    f"got {width}x{height}. "
+                    "Use size='auto' to resize to the nearest power-of-two square, "
+                    "or pass an explicit integer size."
+                )
+            if not is_power_of_two(width):
+                raise ValueError(
+                    "size=None requires an image side length that is a power of two; "
+                    f"got {width}x{height}. "
+                    "Use size='auto' to resize to the nearest power-of-two square, "
+                    "or pass an explicit integer size."
                 )
 
         else:

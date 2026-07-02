@@ -29,7 +29,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--size",
         default="auto",
-        help="'auto', integer size, or 'none'. Default: auto",
+        help=(
+            "'auto': resize to nearest power-of-two square. Default. "
+            "'none': no resize; require a square power-of-two image. "
+            "INT: resize to INT x INT."
+        ),
     )
     parser.add_argument("--mode", choices=["rgb", "grayscale"], default="rgb")
     parser.add_argument(
