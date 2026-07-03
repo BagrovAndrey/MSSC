@@ -12,8 +12,10 @@ from mssc.image_io import load_image, save_image
 from mssc.orientation import (
     haar_channel_energy_profile,
     lifted_haar_channel_energy_profile,
+    lifted_local_orientation_coherence_profile,
     local_orientation_coherence_profile,
     local_scale_orientation_entropy_profile,
+    local_scale_orientation_entropy_profile_with_local_q,
     orientation_diverse_organized_profile,
     orientation_entropy_profile,
     organized_profile,
@@ -106,6 +108,8 @@ def summarize_profiles(
     Odiv: np.ndarray,
     Jglob: np.ndarray,
     Jloc: np.ndarray,
+    JlocQ: np.ndarray,
+    Qmap_mean: float,
 ) -> dict[str, float]:
     return {
         "C_total": float(np.sum(C)),
@@ -113,21 +117,25 @@ def summarize_profiles(
         "Odiv_total": float(np.sum(Odiv)),
         "Jglob_total": float(np.sum(Jglob)),
         "Jloc_total": float(np.sum(Jloc)),
+        "JlocQ_total": float(np.sum(JlocQ)),
 
         "H_C": profile_entropy(C),
         "H_O": profile_entropy(O),
         "H_Odiv": profile_entropy(Odiv),
         "H_Jglob": profile_entropy(Jglob),
         "H_Jloc": profile_entropy(Jloc),
+        "H_JlocQ": profile_entropy(JlocQ),
 
         "S_C": entropic_complexity(C),
         "S_O": entropic_complexity(O),
         "S_Odiv": entropic_complexity(Odiv),
         "S_Jglob": entropic_complexity(Jglob),
         "S_Jloc": entropic_complexity(Jloc),
+        "S_JlocQ": entropic_complexity(JlocQ),
 
         "Q_mean": float(np.mean(Q)) if len(Q) else 0.0,
         "D_mean": float(np.mean(D)) if len(D) else 0.0,
+        "Qmap_mean": float(Qmap_mean),
     }
 
 
@@ -168,6 +176,13 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--block-size", type=int, default=2)
     parser.add_argument("--n-steps", type=int, default=None)
+    parser.add_argument(
+        "--connectivity",
+        choices=[4, 8],
+        type=int,
+        default=4,
+        help="Neighbor connectivity for local Q maps. Default: 4.",
+    )
 
     parser.add_argument(
         "--scramble",
@@ -252,7 +267,8 @@ def compute_all_profiles(
     image: np.ndarray,
     block_size: int = 2,
     n_steps: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+    connectivity: int = 4,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
     if block_size != 2:
         raise ValueError(
             "Orientation observables are currently implemented only for block_size=2"
@@ -281,15 +297,31 @@ def compute_all_profiles(
         image,
         n_steps=n_steps,
     )
+    lifted_Qmap = lifted_local_orientation_coherence_profile(
+        image,
+        n_steps=n_steps,
+        connectivity=connectivity,
+    )
 
     O = organized_profile(C, Q)
     Odiv = orientation_diverse_organized_profile(C, Q, D)
     Jglob = scale_orientation_entropy_profile(E, Q)
     Jloc = local_scale_orientation_entropy_profile(lifted_E, Q)
+    JlocQ = local_scale_orientation_entropy_profile_with_local_q(lifted_E, lifted_Qmap)
 
-    summary = summarize_profiles(C, Q, D, O, Odiv, Jglob, Jloc)
+    summary = summarize_profiles(
+        C,
+        Q,
+        D,
+        O,
+        Odiv,
+        Jglob,
+        Jloc,
+        JlocQ,
+        Qmap_mean=float(np.mean(lifted_Qmap)) if lifted_Qmap.size else 0.0,
+    )
 
-    return C, Q, D, O, Odiv, Jglob, Jloc, summary
+    return C, Q, D, O, Odiv, Jglob, Jloc, JlocQ, summary
 
 
 def save_csv(
@@ -301,6 +333,7 @@ def save_csv(
     original_Odiv: np.ndarray,
     original_Jglob: np.ndarray,
     original_Jloc: np.ndarray,
+    original_JlocQ: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
     scrambled_D: np.ndarray,
@@ -308,6 +341,7 @@ def save_csv(
     scrambled_Odiv: np.ndarray,
     scrambled_Jglob: np.ndarray,
     scrambled_Jloc: np.ndarray,
+    scrambled_JlocQ: np.ndarray,
 ) -> None:
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
@@ -321,6 +355,7 @@ def save_csv(
                 "original_Odiv",
                 "original_Jglob",
                 "original_Jloc",
+                "original_JlocQ",
                 "scrambled_C",
                 "scrambled_Q",
                 "scrambled_D",
@@ -328,6 +363,7 @@ def save_csv(
                 "scrambled_Odiv",
                 "scrambled_Jglob",
                 "scrambled_Jloc",
+                "scrambled_JlocQ",
             ]
         )
 
@@ -342,6 +378,7 @@ def save_csv(
                     original_Odiv[k],
                     original_Jglob[k],
                     original_Jloc[k],
+                    original_JlocQ[k],
                     scrambled_C[k],
                     scrambled_Q[k],
                     scrambled_D[k],
@@ -349,6 +386,7 @@ def save_csv(
                     scrambled_Odiv[k],
                     scrambled_Jglob[k],
                     scrambled_Jloc[k],
+                    scrambled_JlocQ[k],
                 ]
             )
 
@@ -358,7 +396,7 @@ def format_summary_for_title(summary: dict[str, float]) -> str:
         f"C={summary['C_total']:.4g}, "
         f"Odiv={summary['Odiv_total']:.4g}\n"
         f"Jglob={summary['Jglob_total']:.4g}, "
-        f"Jloc={summary['Jloc_total']:.4g}"
+        f"JlocQ={summary['JlocQ_total']:.4g}"
     )
 
 
@@ -373,6 +411,7 @@ def save_comparison_plot(
     original_Odiv: np.ndarray,
     original_Jglob: np.ndarray,
     original_Jloc: np.ndarray,
+    original_JlocQ: np.ndarray,
     scrambled_C: np.ndarray,
     scrambled_Q: np.ndarray,
     scrambled_D: np.ndarray,
@@ -380,6 +419,7 @@ def save_comparison_plot(
     scrambled_Odiv: np.ndarray,
     scrambled_Jglob: np.ndarray,
     scrambled_Jloc: np.ndarray,
+    scrambled_JlocQ: np.ndarray,
     original_summary: dict[str, float],
     scrambled_summary: dict[str, float],
     scramble_label: str,
@@ -441,9 +481,11 @@ def save_comparison_plot(
     ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} Jglob")
     ax_J.plot(k, original_Jloc, marker="d", label="original Jloc")
     ax_J.plot(k, scrambled_Jloc, marker="d", label=f"{scramble_label} Jloc")
+    ax_J.plot(k, original_JlocQ, marker="x", label="original JlocQ")
+    ax_J.plot(k, scrambled_JlocQ, marker="x", label=f"{scramble_label} JlocQ")
     ax_J.set_xlabel("Scale index k")
     ax_J.set_ylabel("J profile")
-    ax_J.set_title("Global vs local/nested scale-orientation entropy")
+    ax_J.set_title("Global, local, and local-Q scale-orientation entropy")
     ax_J.legend()
 
     fig.tight_layout()
@@ -458,18 +500,22 @@ def print_summary(name: str, summary: dict[str, float]) -> None:
     print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
     print(f"  Jglob_total = {summary['Jglob_total']:.12g}")
     print(f"  Jloc_total  = {summary['Jloc_total']:.12g}")
+    print(f"  JlocQ_total = {summary['JlocQ_total']:.12g}")
     print(f"  H_C        = {summary['H_C']:.12g}")
     print(f"  H_O        = {summary['H_O']:.12g}")
     print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
     print(f"  H_Jglob    = {summary['H_Jglob']:.12g}")
     print(f"  H_Jloc     = {summary['H_Jloc']:.12g}")
+    print(f"  H_JlocQ    = {summary['H_JlocQ']:.12g}")
     print(f"  S_C        = {summary['S_C']:.12g}")
     print(f"  S_O        = {summary['S_O']:.12g}")
     print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
     print(f"  S_Jglob    = {summary['S_Jglob']:.12g}")
     print(f"  S_Jloc     = {summary['S_Jloc']:.12g}")
+    print(f"  S_JlocQ    = {summary['S_JlocQ']:.12g}")
     print(f"  Q_mean     = {summary['Q_mean']:.12g}")
     print(f"  D_mean     = {summary['D_mean']:.12g}")
+    print(f"  Qmap_mean  = {summary['Qmap_mean']:.12g}")
 
 
 def add_suffix(path: Path, suffix: str) -> Path:
@@ -504,11 +550,13 @@ def run_one_analysis(
         original_Odiv,
         original_Jglob,
         original_Jloc,
+        original_JlocQ,
         original_summary,
     ) = compute_all_profiles(
         image,
         block_size=args.block_size,
         n_steps=args.n_steps,
+        connectivity=args.connectivity,
     )
 
     (
@@ -519,11 +567,13 @@ def run_one_analysis(
         scrambled_Odiv,
         scrambled_Jglob,
         scrambled_Jloc,
+        scrambled_JlocQ,
         scrambled_summary,
     ) = compute_all_profiles(
         scrambled,
         block_size=args.block_size,
         n_steps=args.n_steps,
+        connectivity=args.connectivity,
     )
 
     print()
@@ -537,18 +587,18 @@ def run_one_analysis(
 
     print(
         "k "
-        "original_C original_Q original_D original_O original_Odiv original_Jglob original_Jloc "
-        "scrambled_C scrambled_Q scrambled_D scrambled_O scrambled_Odiv scrambled_Jglob scrambled_Jloc"
+        "original_C original_Q original_D original_O original_Odiv original_Jglob original_Jloc original_JlocQ "
+        "scrambled_C scrambled_Q scrambled_D scrambled_O scrambled_Odiv scrambled_Jglob scrambled_Jloc scrambled_JlocQ"
     )
     for k in range(len(original_C)):
         print(
             f"{k} "
             f"{original_C[k]:.12g} {original_Q[k]:.12g} "
             f"{original_D[k]:.12g} {original_O[k]:.12g} {original_Odiv[k]:.12g} "
-            f"{original_Jglob[k]:.12g} {original_Jloc[k]:.12g} "
+            f"{original_Jglob[k]:.12g} {original_Jloc[k]:.12g} {original_JlocQ[k]:.12g} "
             f"{scrambled_C[k]:.12g} {scrambled_Q[k]:.12g} "
             f"{scrambled_D[k]:.12g} {scrambled_O[k]:.12g} {scrambled_Odiv[k]:.12g} "
-            f"{scrambled_Jglob[k]:.12g} {scrambled_Jloc[k]:.12g}"
+            f"{scrambled_Jglob[k]:.12g} {scrambled_Jloc[k]:.12g} {scrambled_JlocQ[k]:.12g}"
         )
 
     if out_csv is not None:
@@ -561,6 +611,7 @@ def run_one_analysis(
             original_Odiv,
             original_Jglob,
             original_Jloc,
+            original_JlocQ,
             scrambled_C,
             scrambled_Q,
             scrambled_D,
@@ -568,6 +619,7 @@ def run_one_analysis(
             scrambled_Odiv,
             scrambled_Jglob,
             scrambled_Jloc,
+            scrambled_JlocQ,
         )
         print(f"Saved CSV: {out_csv}")
 
@@ -583,6 +635,7 @@ def run_one_analysis(
             original_Odiv,
             original_Jglob,
             original_Jloc,
+            original_JlocQ,
             scrambled_C,
             scrambled_Q,
             scrambled_D,
@@ -590,6 +643,7 @@ def run_one_analysis(
             scrambled_Odiv,
             scrambled_Jglob,
             scrambled_Jloc,
+            scrambled_JlocQ,
             original_summary,
             scrambled_summary,
             scramble_label=scramble_label,

@@ -5,6 +5,14 @@ import numpy as np
 from mssc.complexity import coarse_grain, max_steps, validate_image
 
 
+def _neighbor_shifts(connectivity: int) -> list[tuple[int, int]]:
+    if connectivity == 4:
+        return [(0, 1), (1, 0)]
+    if connectivity == 8:
+        return [(0, 1), (1, 0), (1, 1), (1, -1)]
+    raise ValueError("connectivity must be 4 or 8")
+
+
 def haar_detail_vectors(image: np.ndarray) -> np.ndarray:
     """
     Compute local Haar-like detail vectors for non-overlapping 2x2 blocks.
@@ -115,6 +123,101 @@ def local_orientation_coherence(
 ) -> float:
     h = haar_detail_vectors(image)
     return local_orientation_coherence_from_h(h, eps=eps)
+
+
+def local_orientation_coherence_map_from_h(
+    h: np.ndarray,
+    connectivity: int = 4,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Block-level nematic coherence map from Haar-detail vectors.
+
+    The returned map has one value per 2x2 block. Each block is compared to
+    its nearest neighbors using the same sign-insensitive alignment used in the
+    scale-global coherence observable.
+    """
+    h = np.asarray(h, dtype=float)
+
+    if h.ndim != 3:
+        raise ValueError("h must have shape (n, n, d)")
+
+    nrows, ncols, d = h.shape
+    qsum = np.zeros((nrows, ncols), dtype=float)
+    wsum = np.zeros((nrows, ncols), dtype=float)
+
+    if nrows == 0 or ncols == 0 or (nrows == 1 and ncols == 1):
+        return np.zeros((nrows, ncols), dtype=float)
+
+    energy = np.sum(h * h, axis=-1)
+    unit = np.zeros_like(h, dtype=float)
+    valid = energy > eps
+    unit[valid] = h[valid] / np.sqrt(energy[valid])[:, None]
+
+    for dr, dc in _neighbor_shifts(connectivity):
+        if dr >= 0:
+            src_r = slice(0, nrows - dr)
+            dst_r = slice(dr, nrows)
+        else:
+            src_r = slice(-dr, nrows)
+            dst_r = slice(0, nrows + dr)
+
+        if dc >= 0:
+            src_c = slice(0, ncols - dc)
+            dst_c = slice(dc, ncols)
+        else:
+            src_c = slice(-dc, ncols)
+            dst_c = slice(0, ncols + dc)
+
+        if (src_r.stop - src_r.start) <= 0 or (src_c.stop - src_c.start) <= 0:
+            continue
+
+        unit_a = unit[src_r, src_c]
+        unit_b = unit[dst_r, dst_c]
+        energy_a = energy[src_r, src_c]
+        energy_b = energy[dst_r, dst_c]
+
+        weight = np.sqrt(energy_a * energy_b)
+        dot = np.sum(unit_a * unit_b, axis=-1)
+        value = dot * dot
+
+        qsum[src_r, src_c] += weight * value
+        qsum[dst_r, dst_c] += weight * value
+        wsum[src_r, src_c] += weight
+        wsum[dst_r, dst_c] += weight
+
+    qmap = np.zeros((nrows, ncols), dtype=float)
+    valid_blocks = wsum > eps
+
+    if not np.any(valid_blocks):
+        return qmap
+
+    mean_dot2 = np.zeros_like(qmap)
+    mean_dot2[valid_blocks] = qsum[valid_blocks] / wsum[valid_blocks]
+
+    baseline = 1.0 / d
+    qmap[valid_blocks] = (mean_dot2[valid_blocks] - baseline) / (1.0 - baseline)
+
+    return np.maximum(qmap, 0.0)
+
+
+def local_orientation_coherence_map(
+    image: np.ndarray,
+    connectivity: int = 4,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return a block-level map of local orientation coherence.
+
+    The result has shape (L/2, L/2) for one RG layer of shape (L, L) or
+    (L, L, C).
+    """
+    h = haar_detail_vectors(image)
+    return local_orientation_coherence_map_from_h(
+        h,
+        connectivity=connectivity,
+        eps=eps,
+    )
 
 
 def orientation_entropy_from_h(
@@ -293,6 +396,80 @@ def local_orientation_coherence_profile(
     return np.asarray(profile, dtype=float)
 
 
+def local_orientation_coherence_map_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+    connectivity: int = 4,
+    eps: float = 1e-15,
+) -> list[np.ndarray]:
+    """
+    Return block-level local coherence maps along the RG trajectory.
+
+    Entry k has shape (L_k/2, L_k/2), where L_k is the side length of the
+    RG layer f_k.
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    profile = []
+
+    for _ in range(n_steps):
+        profile.append(
+            local_orientation_coherence_map(
+                current,
+                connectivity=connectivity,
+                eps=eps,
+            )
+        )
+        current = coarse_grain(current, block_size=2)
+
+    return profile
+
+
+def lifted_local_orientation_coherence_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+    connectivity: int = 4,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return local coherence maps lifted to the original image grid.
+
+    The output has shape (n_steps, L0, L0).
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    original_size = image.shape[0]
+    lifted_profile = []
+
+    for k in range(n_steps):
+        qmap = local_orientation_coherence_map(
+            current,
+            connectivity=connectivity,
+            eps=eps,
+        )
+        factor = 2 ** (k + 1)
+        lifted = np.repeat(np.repeat(qmap, factor, axis=0), factor, axis=1)
+
+        if lifted.shape != (original_size, original_size):
+            raise ValueError(
+                "lifted local orientation coherence map has incorrect shape: "
+                f"expected {(original_size, original_size)}, got {lifted.shape}"
+            )
+
+        lifted_profile.append(lifted)
+        current = coarse_grain(current, block_size=2)
+
+    return np.asarray(lifted_profile, dtype=float)
+
+
 def orientation_entropy_profile(
     image: np.ndarray,
     n_steps: int | None = None,
@@ -443,3 +620,46 @@ def local_scale_orientation_entropy_profile(
         Jloc[k] = float(np.mean(np.sum(terms, axis=-1)))
 
     return Jloc
+
+
+def local_scale_orientation_entropy_profile_with_local_q(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Compute Jloc using spatially local coherence weights.
+
+    The local ordered channel weights are
+
+        W_{k,alpha}(x) = max(q_k(x), 0) E_{k,alpha}(x).
+    """
+    E = np.asarray(lifted_channel_energy_profile, dtype=float)
+    q = np.asarray(lifted_local_q_profile, dtype=float)
+
+    if E.ndim != 4:
+        raise ValueError("lifted_channel_energy_profile must have shape (n_steps, L, L, d)")
+    if q.ndim != 3:
+        raise ValueError("lifted_local_q_profile must have shape (n_steps, L, L)")
+    if E.shape[:3] != q.shape:
+        raise ValueError("lifted_channel_energy_profile and lifted_local_q_profile must agree on (n_steps, L, L)")
+
+    W = E * np.maximum(q, 0.0)[..., None]
+    Wtot = np.sum(W, axis=(0, 3))
+
+    JlocQ = np.zeros(E.shape[0], dtype=float)
+    valid_points = Wtot > eps
+
+    if not np.any(valid_points):
+        return JlocQ
+
+    for k in range(E.shape[0]):
+        ratio = np.ones_like(W[k])
+        np.divide(W[k], Wtot[..., None], out=ratio, where=valid_points[..., None])
+
+        terms = np.zeros_like(W[k])
+        mask = (W[k] > eps) & valid_points[..., None]
+        terms[mask] = -W[k][mask] * np.log(ratio[mask])
+        JlocQ[k] = float(np.mean(np.sum(terms, axis=-1)))
+
+    return JlocQ

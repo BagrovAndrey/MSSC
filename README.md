@@ -84,7 +84,7 @@ The local orientation coherence profile is
 Q_k
 ```
 
-where `Q_k` measures energy-weighted signed alignment of local Haar detail vectors between neighboring blocks at scale `k`.
+where `Q_k` measures energy-weighted nematic/sign-insensitive alignment of local Haar detail vectors between neighboring blocks at scale `k`.
 
 The organized MSSC profile is
 
@@ -106,23 +106,34 @@ The orientation-diverse organized profile is
 Odiv_k = C_k * max(Q_k, 0) * D_k
 ```
 
-Finally, the comparison script computes a scale-orientation entropy contribution profile
+The code also computes a scale-orientation entropy contribution profile
 
 ```text
-J_k
+Jglob_k
 ```
 
 based on ordered Haar-channel energies across both scale and orientation channels.
+
+It also computes two local/nested variants:
+
+```text
+Jloc_k
+JlocQ_k
+```
+
+where `Jloc_k` uses the scale-global coherence factor `Q_k`, while `JlocQ_k` uses spatially local coherence maps `q_k(x)` lifted back to the original image grid.
 
 The corresponding totals include
 
 ```text
 O    = sum_k O_k
 Odiv = sum_k Odiv_k
-J    = sum_k J_k
+Jglob = sum_k Jglob_k
+Jloc  = sum_k Jloc_k
+JlocQ = sum_k JlocQ_k
 ```
 
-Important: these definitions are experimental diagnostics. `Q_k`, `D_k`, `Odiv_k`, and `J_k` should be compared across controlled examples rather than overinterpreted as final complexity measures.
+Important: these definitions are experimental diagnostics. `Q_k`, `D_k`, `Odiv_k`, `Jglob_k`, `Jloc_k`, and `JlocQ_k` should be compared across controlled examples rather than overinterpreted as final complexity measures.
 
 ## Entropic summaries over scales
 
@@ -152,17 +163,23 @@ The comparison script reports:
 C     = sum_k C_k
 O     = sum_k O_k
 Odiv  = sum_k Odiv_k
-J     = sum_k J_k
+Jglob = sum_k Jglob_k
+Jloc  = sum_k Jloc_k
+JlocQ = sum_k JlocQ_k
 
 H_C   = entropy of normalized C_k
 H_O   = entropy of normalized O_k
 H_Odiv
-H_J
+H_Jglob
+H_Jloc
+H_JlocQ
 
 S_C   = C * H_C
 S_O   = O * H_O
 S_Odiv
-S_J
+S_Jglob
+S_Jloc
+S_JlocQ
 ```
 
 Interpretation:
@@ -183,13 +200,19 @@ D_k:
 Odiv_k:
   organized energy weighted by within-scale orientation diversity
 
-J_k:
-  entropy contribution of ordered scale-orientation channel weights
+Jglob_k:
+  entropy contribution of globally ordered scale-orientation channel weights
 
-H_C, H_O, H_Odiv, H_J:
+Jloc_k:
+  local/nested entropy using the scale-global coherence factor Q_k
+
+JlocQ_k:
+  local/nested entropy using spatially local coherence maps q_k(x)
+
+H_C, H_O, H_Odiv, H_Jglob, H_Jloc, H_JlocQ:
   how broadly the corresponding profile is distributed across scales
 
-S_C, S_O, S_Odiv, S_J:
+S_C, S_O, S_Odiv, S_Jglob, S_Jloc, S_JlocQ:
   total amount of structure weighted by its multiscale spread
 ```
 
@@ -347,6 +370,8 @@ Optional analysis flags:
 --normalize-intensity none
 --normalize-intensity minmax
 --compare-normalized
+--connectivity 4
+--connectivity 8
 ```
 
 The comparison plot shows:
@@ -359,21 +384,36 @@ C_k profiles
 Q_k profiles
 D_k profiles
 O_k and Odiv_k profiles
-Jglob_k and Jloc_k profiles
+Jglob_k, Jloc_k, and JlocQ_k profiles
 ```
 
 The figure title reports cumulative values:
 
 ```text
-C, Odiv, Jglob, Jloc
+C, Odiv, Jglob, JlocQ
 ```
 
 The CSV contains:
 
 ```text
 k,
-original_C, original_Q, original_D, original_O, original_Odiv, original_Jglob, original_Jloc,
-scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_Jglob, scrambled_Jloc
+original_C, original_Q, original_D, original_O, original_Odiv, original_Jglob, original_Jloc, original_JlocQ,
+scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_Jglob, scrambled_Jloc, scrambled_JlocQ
+```
+
+## Run the toy benchmark panel
+
+```bash
+PYTHONPATH=. python3 scripts/benchmark_toy_panel.py --out-dir benchmark_toys
+```
+
+This generates synthetic benchmark arrays directly in memory, computes the current diagnostics, and writes:
+
+```text
+benchmark_summary.csv
+benchmark_profiles.csv
+benchmark_panel.png
+benchmark_profiles.png
 ```
 
 ## Current file structure
@@ -389,6 +429,7 @@ mssc-image/
     visualize.py
 
   scripts/
+    benchmark_toy_panel.py
     compute_complexity.py
     generate_toy_images.py
     visualize_layers.py
@@ -399,7 +440,7 @@ mssc-image/
 
 The naive MSSC profile `C_k` is best interpreted as a scale-resolved residual-energy profile. It is closely related in spirit to a power spectrum, although the current implementation is based on real-space block coarse-graining rather than Fourier filtering.
 
-The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity. `Jglob_k` captures entropy contributions from the global joint scale-orientation distribution, while `Jloc_k` is the newer local/nested variant intended to reward co-located multiscale organization rather than patchwork diversity. None of these should yet be treated as final definitions of structural complexity.
+The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity. `Jglob_k` captures entropy contributions from the global joint scale-orientation distribution, `Jloc_k` adds local/nested weighting using scale-global `Q_k`, and `JlocQ_k` uses spatially local coherence maps `q_k(x)` instead of a single scale-level coherence factor. None of these should yet be treated as final definitions of structural complexity.
 
 A useful diagnostic is to compare:
 
@@ -409,7 +450,7 @@ tile-shuffled
 phase-scrambled
 ```
 
-If `C_k` is preserved but `O_k`, `Odiv_k`, `Jglob_k`, or `Jloc_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
+If `C_k` is preserved but `O_k`, `Odiv_k`, `Jglob_k`, `Jloc_k`, or `JlocQ_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
 
 ## Known limitations
 
