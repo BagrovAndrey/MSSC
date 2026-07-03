@@ -1,74 +1,110 @@
 # MSSC Image
 
-Minimal Python tools for computing multi-scale structural complexity profiles of images.
+Minimal Python tools for experimenting with multi-scale structural complexity (MSSC) on images.
 
-This repository implements a simple real-space version of multi-scale structural complexity (MSSC) for images. The code is intentionally small and experimental. The current goal is not to provide a polished package, but to explore how different image transformations affect scale-resolved complexity profiles.
+The repository is intentionally small and NumPy-based. It currently contains:
 
-## What it computes
+- A basic real-space MSSC profile based on repeated `2 x 2` block averaging.
+- Experimental orientation-aware diagnostics built on local Haar-like detail vectors.
+- CLI scripts for analysis, scrambling comparisons, toy-image generation, RG-layer visualization, and benchmark panels.
 
-The core object is an image represented as a square NumPy array:
+## Installation
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Run scripts from the repository root:
+
+```bash
+PYTHONPATH=. python3 scripts/<script>.py ...
+```
+
+## Repository layout
+
+```text
+mssc/
+  __init__.py
+  complexity.py
+  image_io.py
+  orientation.py
+  shuffle.py
+  visualize.py
+
+scripts/
+  benchmark_toy_panel.py
+  compute_complexity.py
+  generate_toy_images.py
+  make_binary_image.py
+  shuffle_compare.py
+  visualize_layers.py
+```
+
+## Core MSSC definition
+
+An image is treated as either:
 
 ```python
-(L, L)        # grayscale image
-(L, L, C)     # RGB or vector-valued image
+(L, L)        # grayscale
+(L, L, C)     # RGB or vector-valued
 ```
 
-The image is repeatedly coarse-grained by averaging non-overlapping `2 x 2` blocks. At each step, the coarse image is upscaled back to the previous resolution and compared with the previous image.
-
-If
+At each RG step:
 
 ```text
-f_k     = image at coarse-graining step k
 f_{k+1} = coarse_grain(f_k)
-U       = nearest-neighbor upscaling
-```
-
-then the detail residual is
-
-```text
 d_k = f_k - U f_{k+1}
-```
-
-and the partial complexity is
-
-```text
 C_k = 0.5 * mean(d_k^2)
 ```
 
-For RGB images, the squared difference is summed over color channels before spatial averaging.
+where `U` is nearest-neighbor upscaling back to the previous resolution. For multi-channel images, squared differences are summed over channels before spatial averaging.
 
-The full MSSC profile is the sequence
+The naive MSSC profile is:
 
 ```text
 C_0, C_1, C_2, ...
 ```
 
-and the total naive MSSC is
+and the total naive complexity is:
 
 ```text
 C = sum_k C_k
 ```
 
-## Current experimental extensions: orientation-aware profiles
+## Image loading behavior
 
-The repository also contains an experimental phase/organization-sensitive extension.
+`mssc.image_io.load_image(...)` supports:
 
-For every `2 x 2` block, the code computes a local Haar-like detail vector:
-
-```text
-h_x   = left-right contrast
-h_y   = top-bottom contrast
-h_xy  = diagonal/checkerboard contrast
+```python
+load_image(path, size="auto", mode="rgb" | "grayscale", value_range="minus1_1" | "0_1")
 ```
 
-For a scalar block
+Current behavior:
+
+- `size="auto"` resizes to a square whose side is the nearest power of two to `max(width, height)`.
+- `size=<int>` forces `<int> x <int>`.
+- `size=None` means no resize; the image must already be square and power-of-two.
+- `mode="rgb"` returns `(L, L, 3)`.
+- `mode="grayscale"` returns `(L, L)`.
+- `value_range="0_1"` maps pixel values to `[0, 1]`.
+- `value_range="minus1_1"` maps pixel values to `[-1, 1]`.
+
+The code does one global pixel-value conversion at load time. It does not renormalize coarse-grained layers independently.
+
+## Orientation-aware diagnostics
+
+`mssc/orientation.py` adds observables tied specifically to the current `2 x 2` coarse-graining protocol.
+
+For each `2 x 2` block
 
 ```text
 a b
 c d
 ```
 
-the components are
+the local Haar-like detail channels are
 
 ```text
 h_x  = (a + c - b - d) / 4
@@ -76,220 +112,49 @@ h_y  = (a + b - c - d) / 4
 h_xy = (a - b - c + d) / 4
 ```
 
-For RGB images, the same construction is applied channel-wise and concatenated into one local detail vector.
+The main derived profiles are:
 
-The local orientation coherence profile is
+- `Q_k`: local orientation coherence.
+- `D_k`: orientation entropy / diversity.
+- `O_k = C_k * max(Q_k, 0)`.
+- `Odiv_k = C_k * max(Q_k, 0) * D_k`.
+- `Jglob_k`: global scale-orientation entropy contribution profile.
+- `Jloc_k`: local/nested entropy profile weighted by scale-global `Q_k`.
+- `JlocQ_k`: local/nested entropy profile weighted by spatially local coherence maps.
 
-```text
-Q_k
-```
-
-where `Q_k` measures energy-weighted nematic/sign-insensitive alignment of local Haar detail vectors between neighboring blocks at scale `k`.
-
-The organized MSSC profile is
-
-```text
-O_k = C_k * max(Q_k, 0)
-```
-
-The code also computes the within-scale orientation entropy profile
-
-```text
-D_k
-```
-
-where `D_k` measures how broadly the local Haar detail energy is spread across Haar channels at a fixed scale.
-
-The orientation-diverse organized profile is
-
-```text
-Odiv_k = C_k * max(Q_k, 0) * D_k
-```
-
-The code also computes a scale-orientation entropy contribution profile
-
-```text
-Jglob_k
-```
-
-based on ordered Haar-channel energies across both scale and orientation channels.
-
-It also computes two local/nested variants:
-
-```text
-Jloc_k
-JlocQ_k
-```
-
-where `Jloc_k` uses the scale-global coherence factor `Q_k`, while `JlocQ_k` uses spatially local coherence maps `q_k(x)` lifted back to the original image grid.
-
-The corresponding totals include
-
-```text
-O    = sum_k O_k
-Odiv = sum_k Odiv_k
-Jglob = sum_k Jglob_k
-Jloc  = sum_k Jloc_k
-JlocQ = sum_k JlocQ_k
-```
-
-Important: these definitions are experimental diagnostics. `Q_k`, `D_k`, `Odiv_k`, `Jglob_k`, `Jloc_k`, and `JlocQ_k` should be compared across controlled examples rather than overinterpreted as final complexity measures.
-
-## Entropic summaries over scales
-
-The code also computes entropy-based summaries of scale profiles.
-
-For any non-negative profile `P_k`, define
-
-```text
-p_k = P_k / sum_j P_j
-```
-
-and
-
-```text
-H(P) = - sum_k p_k log(p_k)
-```
-
-The entropic complexity is
-
-```text
-S(P) = sum_k P_k * H(P)
-```
-
-The comparison script reports:
-
-```text
-C     = sum_k C_k
-O     = sum_k O_k
-Odiv  = sum_k Odiv_k
-Jglob = sum_k Jglob_k
-Jloc  = sum_k Jloc_k
-JlocQ = sum_k JlocQ_k
-
-H_C   = entropy of normalized C_k
-H_O   = entropy of normalized O_k
-H_Odiv
-H_Jglob
-H_Jloc
-H_JlocQ
-
-S_C   = C * H_C
-S_O   = O * H_O
-S_Odiv
-S_Jglob
-S_Jloc
-S_JlocQ
-```
-
-Interpretation:
-
-```text
-C_k:
-  scale-resolved residual energy
-
-Q_k:
-  local orientation coherence
-
-O_k:
-  organized residual energy
-
-D_k:
-  within-scale orientation diversity
-
-Odiv_k:
-  organized energy weighted by within-scale orientation diversity
-
-Jglob_k:
-  entropy contribution of globally ordered scale-orientation channel weights
-
-Jloc_k:
-  local/nested entropy using the scale-global coherence factor Q_k
-
-JlocQ_k:
-  local/nested entropy using spatially local coherence maps q_k(x)
-
-H_C, H_O, H_Odiv, H_Jglob, H_Jloc, H_JlocQ:
-  how broadly the corresponding profile is distributed across scales
-
-S_C, S_O, S_Odiv, S_Jglob, S_Jloc, S_JlocQ:
-  total amount of structure weighted by its multiscale spread
-```
-
-## Image loading
-
-Images are loaded with Pillow and converted to either RGB or grayscale.
-
-By default, images are resized to a square whose size is the nearest power of two based on the larger input dimension:
-
-```text
-1000 x 875 -> 1024 x 1024
-600 x 600  -> 512 x 512
-```
-
-This is the default behavior of the scripts and of `load_image(...)`. It is controlled by the command-line argument:
-
-```bash
---size auto
-```
-
-Other options:
-
-```bash
---size 1024   # force 1024 x 1024
---size none   # do not resize; image must already be square and power-of-two
-```
-
-Pixel values are converted once from `uint8` to either `[0, 1]` or `[-1, 1]`.
-
-The code does not normalize the coarse-grained layers independently.
+These are experimental diagnostics, not stable final definitions of complexity.
 
 ## Scrambling modes
 
-The repository currently implements two null models.
+`mssc/shuffle.py` currently provides two null models.
 
-### Tile shuffle
+Tile shuffle:
 
 ```bash
 --scramble tile --tile-size 32
 ```
 
-The image is cut into non-overlapping square tiles and the tile positions are randomly shuffled.
+- Preserves tile contents.
+- Randomizes tile positions.
+- Destroys global arrangement.
+- Introduces tile-boundary artifacts.
 
-This preserves local patches but destroys their global arrangement. It also introduces artificial tile boundaries.
-
-### Phase scrambling
+Phase scramble:
 
 ```bash
 --scramble phase
 ```
 
-The Fourier amplitude of each channel is preserved while the Fourier phase is randomized. This approximately preserves the power spectrum but destroys the spatial phase organization of the image.
+- Preserves Fourier amplitude per channel.
+- Randomizes Fourier phase.
+- Preserves the DC component by default.
+- Returns raw float data for analysis; a saved PNG is only a display version.
 
-The phase-scrambled image is kept as a raw floating-point array for analysis. If it is saved as an image, the saved file is only a display version.
+## Scripts
 
-## Minimal setup
+### `compute_complexity.py`
 
-Create and activate a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run scripts from the repository root with:
-
-```bash
-PYTHONPATH=. python3 scripts/script_name.py ...
-```
-
-## Compute the naive MSSC profile
+Computes the naive MSSC profile `C_k`.
 
 ```bash
 PYTHONPATH=. python3 scripts/compute_complexity.py image.png \
@@ -297,23 +162,23 @@ PYTHONPATH=. python3 scripts/compute_complexity.py image.png \
   --out-plot profile.png
 ```
 
-Optional arguments:
+Important options:
 
-```bash
---size auto
---size 512
---size none
+- `--size auto|none|INT`
+- `--mode rgb|grayscale` (default: `rgb`)
+- `--value-range minus1_1|0_1` (default: `minus1_1`)
+- `--block-size INT` (default: `2`)
+- `--n-steps INT`
 
---mode rgb
---mode grayscale
+Outputs:
 
---value-range minus1_1
---value-range 0_1
+- Prints `C_k`, total complexity, and total complexity without `C_0`.
+- Optional CSV with columns `k, C_k`.
+- Optional line plot of the profile.
 
---n-steps 8
-```
+### `visualize_layers.py`
 
-## Visualize coarse-graining layers
+Saves the original image and successive coarse-grained layers.
 
 ```bash
 PYTHONPATH=. python3 scripts/visualize_layers.py image.png \
@@ -321,27 +186,21 @@ PYTHONPATH=. python3 scripts/visualize_layers.py image.png \
   --out layers.png
 ```
 
-This shows the original image and successive coarse-grained layers.
+Important options:
 
-## Generate toy benchmark images
+- `--size auto|none|INT`
+- `--mode rgb|grayscale` (default: `rgb`)
+- `--value-range minus1_1|0_1`
+- `--block-size INT` (default: `2`)
+- `--n-steps INT` (default: `6`)
 
-```bash
-PYTHONPATH=. python3 scripts/generate_toy_images.py toy_images
-```
+Each layer panel includes its scale index and, for `k > 0`, the previous-step partial complexity.
 
-This writes a small benchmark set:
+### `shuffle_compare.py`
 
-```text
-uniform
-noise
-stripes
-checkerboard
-multiscale
-```
+Compares an image against a scrambled version using both naive and orientation-aware profiles.
 
-## Compare original and scrambled images
-
-Tile shuffle:
+Tile-shuffle example:
 
 ```bash
 PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
@@ -349,51 +208,37 @@ PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
   --tile-size 32 \
   --seed 123 \
   --out-plot comparison_tile.png \
-  --out-csv comparison_tile.csv \
-  --save-scrambled tile_scrambled.png
+  --out-csv comparison_tile.csv
 ```
 
-Phase scrambling:
+Phase-scramble example:
 
 ```bash
 PYTHONPATH=. python3 scripts/shuffle_compare.py image.png \
   --scramble phase \
   --seed 123 \
   --out-plot comparison_phase.png \
-  --out-csv comparison_phase.csv \
-  --save-scrambled phase_scrambled_display.png
+  --out-csv comparison_phase.csv
 ```
 
-Optional analysis flags:
+Current defaults and options:
 
-```bash
---normalize-intensity none
---normalize-intensity minmax
---compare-normalized
---connectivity 4
---connectivity 8
-```
+- `--mode grayscale` by default.
+- `--size auto|none|INT`
+- `--value-range minus1_1|0_1`
+- `--normalize-intensity none|minmax` (default: `none`)
+- `--compare-normalized` runs both raw and minmax-normalized analyses and writes suffixed outputs.
+- `--block-size INT` exists, but orientation observables currently require `--block-size 2`.
+- `--n-steps INT`
+- `--connectivity 4|8` for local coherence maps (default: `4`)
+- `--scramble tile|phase`
+- `--tile-size INT` is required for tile shuffle
+- `--seed INT`
+- `--save-scrambled PATH`
 
-The comparison plot shows:
+Printed summaries include totals, entropies, entropic complexities, and mean coherence/diversity values for both original and scrambled images.
 
-```text
-original image
-scrambled image
-
-C_k profiles
-Q_k profiles
-D_k profiles
-O_k and Odiv_k profiles
-Jglob_k, Jloc_k, and JlocQ_k profiles
-```
-
-The figure title reports cumulative values:
-
-```text
-C, Odiv, Jglob, JlocQ
-```
-
-The CSV contains:
+The comparison CSV contains:
 
 ```text
 k,
@@ -401,90 +246,141 @@ original_C, original_Q, original_D, original_O, original_Odiv, original_Jglob, o
 scrambled_C, scrambled_Q, scrambled_D, scrambled_O, scrambled_Odiv, scrambled_Jglob, scrambled_Jloc, scrambled_JlocQ
 ```
 
-## Run the toy benchmark panel
+The comparison plot includes:
+
+- original and scrambled images
+- `C_k`
+- `Q_k`
+- `D_k`
+- `O_k` and `Odiv_k`
+- `Jglob_k`, `Jloc_k`, and `JlocQ_k`
+
+### `generate_toy_images.py`
+
+Writes a small set of canonical toy images.
+
+```bash
+PYTHONPATH=. python3 scripts/generate_toy_images.py toy_images
+```
+
+Current outputs:
+
+- `uniform.png`
+- `noise.png`
+- `stripes.png`
+- `checkerboard.png`
+- `multiscale.png`
+
+Important options:
+
+- `--size INT` (default: `256`; must be even)
+- `--value-range 0_1|minus1_1` (default: `minus1_1`)
+- `--seed INT` for noise (default: `0`)
+- `--stripe-width INT` (default: `16`)
+- `--checker-tile INT` (default: `16`)
+
+### `make_binary_image.py`
+
+Converts an arbitrary image into a square binary black/white PNG.
+
+```bash
+PYTHONPATH=. python3 scripts/make_binary_image.py image.png
+```
+
+Example with an explicit output file:
+
+```bash
+PYTHONPATH=. python3 scripts/make_binary_image.py image.png \
+  --size 512 \
+  --threshold 0.15 \
+  --output test_images/image_binary_512.png
+```
+
+Default pipeline:
+
+```text
+1. Load as grayscale
+2. Resize to nearest power-of-two square
+3. Min-max normalize in the [-1, 1] range
+4. Threshold at 0.0
+5. Save a binary black/white PNG
+```
+
+Important options:
+
+- `--size auto|none|INT`
+- `--threshold FLOAT` (default: `0.0`)
+- `--normalize minmax|none` (default: `minmax`)
+- `--out-dir PATH` (default: `test_images`)
+- `--output PATH` to override the default generated filename
+
+Current behavior details:
+
+- The script always loads the image in grayscale mode.
+- Internal values are kept in the `[-1, 1]` range before thresholding.
+- Pixels `>= threshold` become white (`+1`); pixels below threshold become black (`-1`).
+- `--normalize none` skips min-max stretching and thresholds the raw loaded grayscale values directly.
+- When `--output` is provided, it takes precedence over `--out-dir`.
+
+By default the output path is:
+
+```text
+test_images/<input_stem>_binary.png
+```
+
+The saved image is suitable as a clean binary input for later MSSC experiments on synthetic or thresholded real-world shapes.
+
+### `benchmark_toy_panel.py`
+
+Generates synthetic benchmark arrays in memory, analyzes them, and writes summary artifacts.
 
 ```bash
 PYTHONPATH=. python3 scripts/benchmark_toy_panel.py --out-dir benchmark_toys
 ```
 
-This generates synthetic benchmark arrays directly in memory, computes the current diagnostics, and writes:
+Generated benchmark families:
 
-```text
-benchmark_summary.csv
-benchmark_profiles.csv
-benchmark_panel.png
-benchmark_profiles.png
-```
+- `stripes`
+- `checkerboard`
+- `patchwork`
+- `nested_dyadic`
+- `fractal`
+- `noise`
 
-## Current file structure
+Important options:
 
-```text
-mssc-image/
-  mssc/
-    __init__.py
-    complexity.py
-    image_io.py
-    shuffle.py
-    orientation.py
-    visualize.py
+- `--size INT` (default: `512`; must be power-of-two)
+- `--seed INT` (default: `123`)
+- `--out-dir PATH`
+- `--metric NAME` (default: `JlocQ`) for the panel title and ranking
+- `--n-steps auto|INT`
+- `--connectivity 4|8`
+- `--save-images`
 
-  scripts/
-    benchmark_toy_panel.py
-    compute_complexity.py
-    generate_toy_images.py
-    visualize_layers.py
-    shuffle_compare.py
-```
+Current outputs:
 
-## Scientific interpretation
+- `benchmark_summary.csv`
+- `benchmark_profiles.csv`
+- `benchmark_panel.png`
+- `benchmark_profiles.png`
 
-The naive MSSC profile `C_k` is best interpreted as a scale-resolved residual-energy profile. It is closely related in spirit to a power spectrum, although the current implementation is based on real-space block coarse-graining rather than Fourier filtering.
+The script also prints rankings by the selected metric and emits simple warnings when benchmark orderings look suspicious.
 
-The organized profile `O_k` is an experimental attempt to include local organization of details. `Odiv_k` adds within-scale orientation diversity. `Jglob_k` captures entropy contributions from the global joint scale-orientation distribution, `Jloc_k` adds local/nested weighting using scale-global `Q_k`, and `JlocQ_k` uses spatially local coherence maps `q_k(x)` instead of a single scale-level coherence factor. None of these should yet be treated as final definitions of structural complexity.
+## Python API
 
-A useful diagnostic is to compare:
+The package exports the main helpers through `mssc/__init__.py`, including:
 
-```text
-original
-tile-shuffled
-phase-scrambled
-```
+- `complexity_profile`, `total_complexity`, `coarse_grain`, `upscale_nearest`
+- `load_image`, `save_image`
+- `rg_layers`, `plot_rg_layers`
+- `tile_shuffle`, `phase_scramble`, `power_spectrum`
+- orientation-profile helpers such as `local_orientation_coherence_profile`, `orientation_entropy_profile`, `organized_profile`, `orientation_diverse_organized_profile`, `scale_orientation_entropy_profile`, `local_scale_orientation_entropy_profile`, and `local_scale_orientation_entropy_profile_with_local_q`
 
-If `C_k` is preserved but `O_k`, `Odiv_k`, `Jglob_k`, `Jloc_k`, or `JlocQ_k` are suppressed, the transformation preserves scale energy while destroying organization in different senses.
+## Limitations
 
-## Known limitations
-
-The current implementation is deliberately minimal.
-
-Known limitations:
-
-```text
-1. Coarse-graining is currently hard-coded as 2 x 2 block averaging.
-
-2. Local orientation coherence is tied to this block coarse-graining.
-
-3. The current Q_k is nematic/sign-insensitive, but it is still a protocol-specific diagnostic tied to the present Haar/block construction.
-
-4. RGB images are treated as vector-valued arrays, but no color-space correction is performed.
-
-5. PNG/JPEG loading uses ordinary image intensities, not calibrated physical intensities.
-
-6. Saved phase-scrambled images are display-normalized or clipped and should not be reloaded for quantitative analysis.
-```
-
-## Next possible improvements
-
-Planned or natural next steps:
-
-```text
-1. Keep the core MSSC protocol-agnostic:
-   coarse-graining + lifting + dissimilarity.
-
-2. Treat orientation coherence and the `Jglob` / `Jloc` diagnostics as protocol-specific observables.
-
-3. Add Fourier coarse-graining as an alternative observer.
-
-4. Add graph coarse-graining later for network complexity.
-
-5. Add tests for constant images, white noise, periodic patterns, natural images, tile shuffle, and phase scramble.
-```
+- Orientation-aware observables are currently implemented only for `2 x 2` coarse-graining.
+- `shuffle_compare.py` will raise if you request orientation analysis with `--block-size` other than `2`.
+- `size="auto"` resizes to a square without preserving original aspect ratio.
+- RGB images are treated as vector-valued arrays without color-space correction.
+- Saved phase-scrambled images are display exports, not quantitative source data.
+- This is research code: metrics such as `Odiv`, `Jglob`, `Jloc`, and `JlocQ` should be treated as exploratory.
