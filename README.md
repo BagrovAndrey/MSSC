@@ -36,6 +36,7 @@ mssc/
 scripts/
   benchmark_toy_panel.py
   compute_complexity.py
+  diagnose_jlocq_outlier.py
   generate_toy_images.py
   make_binary_image.py
   shuffle_compare.py
@@ -365,6 +366,73 @@ Current outputs:
 - `benchmark_profiles.png`
 
 The script also prints rankings by the selected metric and emits simple warnings when benchmark orderings look suspicious.
+
+### `diagnose_jlocq_outlier.py`
+
+Diagnoses why a particular image produces a high `JlocQ` by decomposing the current local-Q entropy pipeline into its ingredients.
+
+Analyze an existing image:
+
+```bash
+PYTHONPATH=. python3 scripts/diagnose_jlocq_outlier.py \
+  --image path/to/image.png \
+  --mode grayscale \
+  --value-range minus1_1 \
+  --size auto \
+  --out-dir diagnostics/image_case
+```
+
+Generate synthetic wavy stripes directly as NumPy arrays:
+
+```bash
+PYTHONPATH=. python3 scripts/diagnose_jlocq_outlier.py \
+  --generate wavy_stripes \
+  --size 512 \
+  --stripe-period 64 \
+  --wave-amplitude 24 \
+  --wave-period 256 \
+  --threshold 0.0 \
+  --out-dir diagnostics/generated_wavy_stripes
+```
+
+What it computes:
+
+- the existing profiles `C`, `Q`, `D`, `O`, `Odiv`, `Jglob`, `Jloc`, `JlocQ`
+- `Wsum_k`, the q-weighted organized energy per scale before the entropy factor
+- `Hloc_factor_k = JlocQ_k / Wsum_k`
+- unweighted Haar-channel energies
+- q-weighted Haar-channel energies
+- local maps for selected scales: lifted `q`, summed channel energy, summed q-weighted energy, and per-scale `JlocQ` contribution maps
+
+Important options:
+
+- `--image PATH` or `--generate wavy_stripes`
+- `--size auto|none|INT` for image mode, integer size for generated mode
+- `--mode rgb|grayscale` (default: `grayscale`)
+- `--value-range minus1_1|0_1`
+- `--n-steps INT`
+- `--connectivity 4|8`
+- generated wavy-stripe controls:
+  `--stripe-period`, `--wave-amplitude`, `--wave-period`, `--threshold`, `--binary/--no-binary`
+- `--map-scales 3,4,5` to override the default top-3 `JlocQ_k` scales
+- `--phase-scramble-seeds N` to repeat analysis over phase-scrambled seeds `0..N-1`
+- parameter sweeps:
+  `--sweep-wave-amplitude ...`, `--sweep-stripe-period ...`, `--sweep-wave-period ...`
+
+Current outputs:
+
+- `input_image.png`
+- `summary.csv`
+- `profiles.csv`
+- `channel_energy.csv`
+- `q_weighted_channel_energy.csv`
+- `diagnostic_profiles.png`
+- `channel_energy_profiles.png`
+- `selected_scale_maps/`
+- optional `phase_scramble_summary.csv`
+- optional sweep CSV/PNG files
+
+This script is diagnostic only. It does not change the definitions of the existing MSSC-derived metrics.
 
 ## Python API
 

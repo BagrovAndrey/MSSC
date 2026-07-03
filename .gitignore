@@ -1,5 +1,6 @@
 .venv/
 .matplotlib/
+diagnostics/
 __pycache__/
 *.pyc
 *.png
