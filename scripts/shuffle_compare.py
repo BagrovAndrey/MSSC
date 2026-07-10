@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from mssc.complexity import complexity_profile
+from mssc.display import display_name
 from mssc.image_io import load_image, save_image
 from mssc.orientation import (
     haar_channel_energy_profile,
@@ -201,6 +202,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-csv", type=Path, default=None)
     parser.add_argument("--out-plot", type=Path, default=None)
     parser.add_argument("--save-scrambled", type=Path, default=None)
+    parser.add_argument(
+        "--diagnostics-level",
+        choices=["core", "full"],
+        default="core",
+        help="Default summary/plot detail level. Default: core.",
+    )
 
     return parser.parse_args()
 
@@ -393,10 +400,9 @@ def save_csv(
 
 def format_summary_for_title(summary: dict[str, float]) -> str:
     return (
-        f"C={summary['C_total']:.4g}, "
-        f"Odiv={summary['Odiv_total']:.4g}\n"
-        f"Jglob={summary['Jglob_total']:.4g}, "
-        f"JlocQ={summary['JlocQ_total']:.4g}"
+        f"{display_name('C')}={summary['C_total']:.4g}\n"
+        f"{display_name('Jglob')}={summary['Jglob_total']:.4g}, "
+        f"{display_name('JlocQ')}={summary['JlocQ_total']:.4g}"
     )
 
 
@@ -424,20 +430,29 @@ def save_comparison_plot(
     scrambled_summary: dict[str, float],
     scramble_label: str,
     normalization_label: str,
+    diagnostics_level: str,
 ) -> None:
     k = np.arange(len(original_C))
 
-    fig = plt.figure(figsize=(11, 14))
-    gs = fig.add_gridspec(6, 2, height_ratios=[1.15, 0.7, 0.7, 0.7, 0.7, 0.7])
+    if diagnostics_level == "full":
+        fig = plt.figure(figsize=(11, 14))
+        gs = fig.add_gridspec(6, 2, height_ratios=[1.15, 0.7, 0.7, 0.7, 0.7, 0.7])
+    else:
+        fig = plt.figure(figsize=(11, 9))
+        gs = fig.add_gridspec(3, 2, height_ratios=[1.2, 0.8, 0.9])
 
     ax_img_1 = fig.add_subplot(gs[0, 0])
     ax_img_2 = fig.add_subplot(gs[0, 1])
 
     ax_C = fig.add_subplot(gs[1, :])
-    ax_Q = fig.add_subplot(gs[2, :])
-    ax_D = fig.add_subplot(gs[3, :])
-    ax_O = fig.add_subplot(gs[4, :])
-    ax_J = fig.add_subplot(gs[5, :])
+    ax_Q = ax_D = ax_O = None
+    if diagnostics_level == "full":
+        ax_Q = fig.add_subplot(gs[2, :])
+        ax_D = fig.add_subplot(gs[3, :])
+        ax_O = fig.add_subplot(gs[4, :])
+        ax_J = fig.add_subplot(gs[5, :])
+    else:
+        ax_J = fig.add_subplot(gs[2, :])
 
     show_image(ax_img_1, original_image)
     ax_img_1.set_title("Original\n" + format_summary_for_title(original_summary))
@@ -451,41 +466,48 @@ def save_comparison_plot(
 
     ax_C.plot(k, original_C, marker="o", label="original")
     ax_C.plot(k, scrambled_C, marker="o", label=scramble_label)
-    ax_C.set_ylabel("C_k")
-    ax_C.set_title(f"Naive MSSC profile ({normalization_label})")
+    ax_C.set_ylabel("Cdetail_k")
+    ax_C.set_title(f"{display_name('C')}_k ({normalization_label})")
     ax_C.legend()
 
-    ax_Q.plot(k, original_Q, marker="o", label="original")
-    ax_Q.plot(k, scrambled_Q, marker="o", label=scramble_label)
-    ax_Q.axhline(0.0, linewidth=1)
-    ax_Q.set_ylabel("Q_k")
-    ax_Q.set_title("Local orientation coherence")
-    ax_Q.legend()
+    if diagnostics_level == "full":
+        assert ax_Q is not None and ax_D is not None and ax_O is not None
+        ax_Q.plot(k, original_Q, marker="o", label="original")
+        ax_Q.plot(k, scrambled_Q, marker="o", label=scramble_label)
+        ax_Q.axhline(0.0, linewidth=1)
+        ax_Q.set_ylabel("Q_k")
+        ax_Q.set_title("Local orientation coherence")
+        ax_Q.legend()
 
-    ax_D.plot(k, original_D, marker="o", label="original")
-    ax_D.plot(k, scrambled_D, marker="o", label=scramble_label)
-    ax_D.set_ylabel("D_k")
-    ax_D.set_title("Orientation entropy / diversity")
-    ax_D.legend()
+        ax_D.plot(k, original_D, marker="o", label="original")
+        ax_D.plot(k, scrambled_D, marker="o", label=scramble_label)
+        ax_D.set_ylabel("D_k")
+        ax_D.set_title("Orientation entropy / diversity")
+        ax_D.legend()
 
-    ax_O.plot(k, original_O, marker="o", label="original O = C Q")
-    ax_O.plot(k, scrambled_O, marker="o", label=f"{scramble_label} O = C Q")
-    ax_O.plot(k, original_Odiv, marker="s", label="original Odiv = C Q D")
-    ax_O.plot(k, scrambled_Odiv, marker="s", label=f"{scramble_label} Odiv = C Q D")
-    ax_O.set_xlabel("Scale index k")
-    ax_O.set_ylabel("Profile value")
-    ax_O.set_title("Ordered and orientation-diverse organized MSSC")
-    ax_O.legend()
+        ax_O.plot(k, original_O, marker="o", label="original O = C Q")
+        ax_O.plot(k, scrambled_O, marker="o", label=f"{scramble_label} O = C Q")
+        ax_O.plot(k, original_Odiv, marker="s", label="original Odiv = C Q D")
+        ax_O.plot(k, scrambled_Odiv, marker="s", label=f"{scramble_label} Odiv = C Q D")
+        ax_O.set_xlabel("Scale index k")
+        ax_O.set_ylabel("Profile value")
+        ax_O.set_title("Legacy ordered diagnostics")
+        ax_O.legend()
 
-    ax_J.plot(k, original_Jglob, marker="^", label="original Jglob")
-    ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} Jglob")
-    ax_J.plot(k, original_Jloc, marker="d", label="original Jloc")
-    ax_J.plot(k, scrambled_Jloc, marker="d", label=f"{scramble_label} Jloc")
-    ax_J.plot(k, original_JlocQ, marker="x", label="original JlocQ")
-    ax_J.plot(k, scrambled_JlocQ, marker="x", label=f"{scramble_label} JlocQ")
+    ax_J.plot(k, original_Jglob, marker="^", label=f"original {display_name('Jglob')}")
+    ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} {display_name('Jglob')}")
+    if diagnostics_level == "full":
+        ax_J.plot(k, original_Jloc, marker="d", label="original Jloc")
+        ax_J.plot(k, scrambled_Jloc, marker="d", label=f"{scramble_label} Jloc")
+    ax_J.plot(k, original_JlocQ, marker="x", label=f"original {display_name('JlocQ')}")
+    ax_J.plot(k, scrambled_JlocQ, marker="x", label=f"{scramble_label} {display_name('JlocQ')}")
     ax_J.set_xlabel("Scale index k")
     ax_J.set_ylabel("J profile")
-    ax_J.set_title("Global, local, and local-Q scale-orientation entropy")
+    ax_J.set_title(
+        "Global and nested scale-orientation entropy"
+        if diagnostics_level == "core"
+        else "Global, local, and nested scale-orientation entropy"
+    )
     ax_J.legend()
 
     fig.tight_layout()
@@ -493,29 +515,30 @@ def save_comparison_plot(
     plt.close(fig)
 
 
-def print_summary(name: str, summary: dict[str, float]) -> None:
+def print_summary(name: str, summary: dict[str, float], diagnostics_level: str) -> None:
     print(name)
-    print(f"  C_total    = {summary['C_total']:.12g}")
-    print(f"  O_total    = {summary['O_total']:.12g}")
-    print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
-    print(f"  Jglob_total = {summary['Jglob_total']:.12g}")
-    print(f"  Jloc_total  = {summary['Jloc_total']:.12g}")
-    print(f"  JlocQ_total = {summary['JlocQ_total']:.12g}")
-    print(f"  H_C        = {summary['H_C']:.12g}")
-    print(f"  H_O        = {summary['H_O']:.12g}")
-    print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
-    print(f"  H_Jglob    = {summary['H_Jglob']:.12g}")
-    print(f"  H_Jloc     = {summary['H_Jloc']:.12g}")
-    print(f"  H_JlocQ    = {summary['H_JlocQ']:.12g}")
-    print(f"  S_C        = {summary['S_C']:.12g}")
-    print(f"  S_O        = {summary['S_O']:.12g}")
-    print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
-    print(f"  S_Jglob    = {summary['S_Jglob']:.12g}")
-    print(f"  S_Jloc     = {summary['S_Jloc']:.12g}")
-    print(f"  S_JlocQ    = {summary['S_JlocQ']:.12g}")
-    print(f"  Q_mean     = {summary['Q_mean']:.12g}")
-    print(f"  D_mean     = {summary['D_mean']:.12g}")
-    print(f"  Qmap_mean  = {summary['Qmap_mean']:.12g}")
+    print(f"  {display_name('C')} = {summary['C_total']:.12g}")
+    print(f"  {display_name('Jglob')} = {summary['Jglob_total']:.12g}")
+    print(f"  {display_name('JlocQ')} = {summary['JlocQ_total']:.12g}")
+    if diagnostics_level == "full":
+        print(f"  O_total    = {summary['O_total']:.12g}")
+        print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
+        print(f"  Jloc_total = {summary['Jloc_total']:.12g}")
+        print(f"  H_C        = {summary['H_C']:.12g}")
+        print(f"  H_O        = {summary['H_O']:.12g}")
+        print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
+        print(f"  H_Jglob    = {summary['H_Jglob']:.12g}")
+        print(f"  H_Jloc     = {summary['H_Jloc']:.12g}")
+        print(f"  H_JlocQ    = {summary['H_JlocQ']:.12g}")
+        print(f"  S_C        = {summary['S_C']:.12g}")
+        print(f"  S_O        = {summary['S_O']:.12g}")
+        print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
+        print(f"  S_Jglob    = {summary['S_Jglob']:.12g}")
+        print(f"  S_Jloc     = {summary['S_Jloc']:.12g}")
+        print(f"  S_JlocQ    = {summary['S_JlocQ']:.12g}")
+        print(f"  Q_mean     = {summary['Q_mean']:.12g}")
+        print(f"  D_mean     = {summary['D_mean']:.12g}")
+        print(f"  Qmap_mean  = {summary['Qmap_mean']:.12g}")
 
 
 def add_suffix(path: Path, suffix: str) -> Path:
@@ -580,9 +603,9 @@ def run_one_analysis(
     print("=" * 72)
     print(f"Intensity normalization: {normalization_mode}")
     print("=" * 72)
-    print_summary("Original:", original_summary)
+    print_summary("Original:", original_summary, args.diagnostics_level)
     print()
-    print_summary("Scrambled:", scrambled_summary)
+    print_summary("Scrambled:", scrambled_summary, args.diagnostics_level)
     print()
 
     print(
@@ -648,6 +671,7 @@ def run_one_analysis(
             scrambled_summary,
             scramble_label=scramble_label,
             normalization_label=normalization_mode,
+            diagnostics_level=args.diagnostics_level,
         )
         print(f"Saved plot: {out_plot}")
 

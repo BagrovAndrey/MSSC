@@ -39,11 +39,14 @@ scripts/
   diagnose_jlocq_outlier.py
   generate_toy_images.py
   make_binary_image.py
+  phase_null_benchmark.py
   shuffle_compare.py
   visualize_layers.py
 ```
 
-## Core MSSC definition
+See [METRICS.md](METRICS.md) for the canonical metric definitions, hierarchy, and current failure modes.
+
+## What It Computes
 
 An image is treated as either:
 
@@ -74,7 +77,61 @@ and the total naive complexity is:
 C = sum_k C_k
 ```
 
-## Image loading behavior
+Canonical interpretation:
+
+```text
+Cdetail = current C
+```
+
+`Cdetail` is the scale-resolved discarded detail energy. It is the protocol-core quantity, but it is not a complete complexity measure by itself: noise and simple high-contrast periodic patterns can both score highly.
+
+## Current Block-Haar Extensions
+
+The current public-facing block-Haar metrics are:
+
+```text
+Jglobal = current Jglob
+Jnested = current JlocQ
+Jphase  = Jnested(original) - mean phase-null Jnested
+```
+
+Interpretation:
+
+```text
+Jglobal:
+  global scale-orientation diversity; sensitive to patchwork
+
+Jnested:
+  locally organized multiscale RG-history richness; current working candidate
+
+Jphase:
+  excess of Jnested over a phase-scrambled spectrum-preserving null
+```
+
+Known failure modes remain important:
+
+- `Cdetail` can be high for noise and simple high-contrast periodic patterns.
+- `Jglobal` can over-reward spatial patchwork.
+- `Jnested` can over-reward smoothly deformed regular patterns such as wavy stripes.
+- `Jphase` can suppress fractal or textural structure already encoded in the power spectrum.
+
+## Supporting Diagnostics
+
+The current block-Haar observer also uses:
+
+- `Q_k`: scale-level orientation coherence
+- `q_k(x)`: spatially local coherence map
+- `D_k`: within-scale orientation diversity
+
+## Legacy Diagnostics
+
+The following remain implemented for comparison and debugging, but they are no longer the default public-facing metrics:
+
+- `O_k`
+- `Odiv_k`
+- `Jloc_k`
+
+## Image Loading Behavior
 
 `mssc.image_io.load_image(...)` supports:
 
@@ -93,37 +150,6 @@ Current behavior:
 - `value_range="minus1_1"` maps pixel values to `[-1, 1]`.
 
 The code does one global pixel-value conversion at load time. It does not renormalize coarse-grained layers independently.
-
-## Orientation-aware diagnostics
-
-`mssc/orientation.py` adds observables tied specifically to the current `2 x 2` coarse-graining protocol.
-
-For each `2 x 2` block
-
-```text
-a b
-c d
-```
-
-the local Haar-like detail channels are
-
-```text
-h_x  = (a + c - b - d) / 4
-h_y  = (a + b - c - d) / 4
-h_xy = (a - b - c + d) / 4
-```
-
-The main derived profiles are:
-
-- `Q_k`: local orientation coherence.
-- `D_k`: orientation entropy / diversity.
-- `O_k = C_k * max(Q_k, 0)`.
-- `Odiv_k = C_k * max(Q_k, 0) * D_k`.
-- `Jglob_k`: global scale-orientation entropy contribution profile.
-- `Jloc_k`: local/nested entropy profile weighted by scale-global `Q_k`.
-- `JlocQ_k`: local/nested entropy profile weighted by spatially local coherence maps.
-
-These are experimental diagnostics, not stable final definitions of complexity.
 
 ## Scrambling modes
 
@@ -227,6 +253,7 @@ Current defaults and options:
 - `--mode grayscale` by default.
 - `--size auto|none|INT`
 - `--value-range minus1_1|0_1`
+- `--diagnostics-level core|full` (default: `core`)
 - `--normalize-intensity none|minmax` (default: `none`)
 - `--compare-normalized` runs both raw and minmax-normalized analyses and writes suffixed outputs.
 - `--block-size INT` exists, but orientation observables currently require `--block-size 2`.
@@ -237,7 +264,19 @@ Current defaults and options:
 - `--seed INT`
 - `--save-scrambled PATH`
 
-Printed summaries include totals, entropies, entropic complexities, and mean coherence/diversity values for both original and scrambled images.
+Core-mode summaries and plots focus on:
+
+- `Cdetail`
+- `Jglobal`
+- `Jnested`
+
+Full mode additionally exposes:
+
+- `Q`
+- `D`
+- `O`
+- `Odiv`
+- `Jloc`
 
 The comparison CSV contains:
 
@@ -357,6 +396,7 @@ Important options:
 - `--n-steps auto|INT`
 - `--connectivity 4|8`
 - `--save-images`
+- `--diagnostics-level core|full` (default: `core`)
 
 Current outputs:
 
@@ -369,7 +409,7 @@ The script also prints rankings by the selected metric and emits simple warnings
 
 ### `diagnose_jlocq_outlier.py`
 
-Diagnoses why a particular image produces a high `JlocQ` by decomposing the current local-Q entropy pipeline into its ingredients.
+Diagnoses why a particular image produces a high `Jnested` (`JlocQ` in the current code) by decomposing the current local-Q entropy pipeline into its ingredients.
 
 Analyze an existing image:
 
@@ -416,6 +456,8 @@ Important options:
   `--stripe-period`, `--wave-amplitude`, `--wave-period`, `--threshold`, `--binary/--no-binary`
 - `--map-scales 3,4,5` to override the default top-3 `JlocQ_k` scales
 - `--phase-scramble-seeds N` to repeat analysis over phase-scrambled seeds `0..N-1`
+- `--phase-null-seeds N` to compute `Jphase`-style null excess summaries
+- `--diagnostics-level core|full` (default: `core`)
 - parameter sweeps:
   `--sweep-wave-amplitude ...`, `--sweep-stripe-period ...`, `--sweep-wave-period ...`
 
@@ -434,6 +476,35 @@ Current outputs:
 
 This script is diagnostic only. It does not change the definitions of the existing MSSC-derived metrics.
 
+### `phase_null_benchmark.py`
+
+Runs a batch benchmark that compares absolute metrics with their excess over a phase-scrambled null ensemble.
+
+```bash
+PYTHONPATH=. python3 scripts/phase_null_benchmark.py \
+  --preset toy_plus_wavy \
+  --size 512 \
+  --phase-null-seeds 20 \
+  --out-dir diagnostics/phase_null_panel
+```
+
+Core-mode outputs emphasize:
+
+- `Cdetail`
+- `Jglobal`
+- `Jnested`
+- `Jphase`
+
+Important options:
+
+- `--preset toy_plus_wavy`
+- `--image-dir PATH`
+- `--size auto|none|INT`
+- `--phase-null-seeds INT`
+- `--profile-panel-labels ...`
+- `--offset-average`
+- `--diagnostics-level core|full` (default: `core`)
+
 ## Python API
 
 The package exports the main helpers through `mssc/__init__.py`, including:
@@ -451,4 +522,4 @@ The package exports the main helpers through `mssc/__init__.py`, including:
 - `size="auto"` resizes to a square without preserving original aspect ratio.
 - RGB images are treated as vector-valued arrays without color-space correction.
 - Saved phase-scrambled images are display exports, not quantitative source data.
-- This is research code: metrics such as `Odiv`, `Jglob`, `Jloc`, and `JlocQ` should be treated as exploratory.
+- This is research code: `Jnested` (`JlocQ`), `Jglobal` (`Jglob`), `Jphase`, and the legacy diagnostics should be treated as exploratory and observer-dependent.

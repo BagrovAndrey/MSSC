@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from mssc.complexity import complexity_profile, max_steps
+from mssc.display import display_name
 from mssc.image_io import save_image
 from mssc.orientation import (
     haar_channel_energy_profile,
@@ -21,6 +22,7 @@ from mssc.orientation import (
     organized_profile,
     scale_orientation_entropy_profile,
 )
+from scripts.diagnose_jlocq_outlier import make_wavy_stripes
 
 
 def is_power_of_two(n: int) -> bool:
@@ -171,6 +173,14 @@ def generate_benchmark_images(L: int, seed: int) -> dict[str, np.ndarray]:
         "nested_dyadic": make_nested_dyadic(L),
         "fractal": make_spectral_fractal_binary(L, beta=2.5, seed=seed),
         "noise": make_noise(L, seed=seed),
+        "wavy_stripes": make_wavy_stripes(
+            size=L,
+            stripe_period=64.0,
+            wave_amplitude=24.0,
+            wave_period=256.0,
+            threshold=0.0,
+            binary=True,
+        ),
     }
 
 
@@ -281,13 +291,23 @@ def save_benchmark_panel(
     images: dict[str, np.ndarray],
     summaries: dict[str, dict[str, float]],
     metric: str,
+    diagnostics_level: str,
 ) -> None:
     names = list(images.keys())
     fig, axes = plt.subplots(1, len(names), figsize=(2.6 * len(names), 2.9))
 
     for ax, name in zip(axes, names):
         ax.imshow(images[name], cmap="gray", vmin=-1.0, vmax=1.0, interpolation="nearest")
-        ax.set_title(f"{name.replace('_', ' ')}\n{metric}={summaries[name][f'{metric}_total']:.3g}")
+        if diagnostics_level == "full":
+            title = (
+                f"{name.replace('_', ' ')}\n"
+                f"{display_name('C')}={summaries[name]['C_total']:.3g}, "
+                f"{display_name('Jglob')}={summaries[name]['Jglob_total']:.3g}, "
+                f"{display_name('JlocQ')}={summaries[name]['JlocQ_total']:.3g}"
+            )
+        else:
+            title = f"{name.replace('_', ' ')}\n{display_name(metric)}={summaries[name][f'{metric}_total']:.3g}"
+        ax.set_title(title)
         ax.set_xticks([])
         ax.set_yticks([])
 
@@ -381,6 +401,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-steps", default="auto", help="'auto' or an integer.")
     parser.add_argument("--connectivity", choices=[4, 8], type=int, default=4)
     parser.add_argument("--save-images", action="store_true", help="Save PNG versions of the generated arrays.")
+    parser.add_argument(
+        "--diagnostics-level",
+        choices=["core", "full"],
+        default="core",
+        help="Default summary detail level. Default: core.",
+    )
     return parser.parse_args()
 
 
@@ -442,14 +468,19 @@ def main() -> None:
     print()
     print("Summary totals:")
     for name in images:
-        print(
-            f"  {name:<14s} "
-            + " ".join(
+        if args.diagnostics_level == "full":
+            payload = " ".join(
                 f"{key}={value:.6g}"
                 for key, value in summaries[name].items()
                 if key.endswith("_total")
             )
-        )
+        else:
+            payload = (
+                f"{display_name('C')}={summaries[name]['C_total']:.6g} "
+                f"{display_name('Jglob')}={summaries[name]['Jglob_total']:.6g} "
+                f"{display_name('JlocQ')}={summaries[name]['JlocQ_total']:.6g}"
+            )
+        print(f"  {name:<14s} {payload}")
 
     print_rankings(summaries, metric)
     print_warnings(summaries, metric)
@@ -460,7 +491,13 @@ def main() -> None:
 
     save_summary_csv(args.out_dir / "benchmark_summary.csv", summary_rows)
     save_profiles_csv(args.out_dir / "benchmark_profiles.csv", profile_rows)
-    save_benchmark_panel(args.out_dir / "benchmark_panel.png", images, summaries, metric)
+    save_benchmark_panel(
+        args.out_dir / "benchmark_panel.png",
+        images,
+        summaries,
+        metric,
+        diagnostics_level=args.diagnostics_level,
+    )
     save_profile_plot(args.out_dir / "benchmark_profiles.png", profiles_by_name, metric)
 
     print()

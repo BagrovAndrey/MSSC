@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from mssc.display import display_name, phase_name
 from mssc.image_io import load_image, save_image
 from mssc.shuffle import phase_scramble
 from scripts.benchmark_toy_panel import (
@@ -68,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase-null-seeds", type=int, default=20)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max-panel-images", type=int, default=12)
+    parser.add_argument(
+        "--diagnostics-level",
+        choices=["core", "full"],
+        default="core",
+        help="Default summary detail level. Default: core.",
+    )
     parser.add_argument(
         "--profile-panel-labels",
         default="wavy_stripes,fractal,nested_dyadic,noise",
@@ -203,7 +210,7 @@ def save_phase_null_panel(path: Path, display_rows: list[dict[str, object]]) -> 
             ax.bar([0, 1], [abs_vals[metric], phase_mean[metric]], color=["tab:blue", "tab:orange"])
             ax.set_xticks([0, 1])
             ax.set_xticklabels(["abs", "phase"])
-            ax.set_title(metric)
+            ax.set_title(display_name(metric))
 
     fig.tight_layout()
     fig.savefig(path, dpi=200)
@@ -219,8 +226,9 @@ def save_phase_null_excess_panel(path: Path, labels: list[str], metric_rows: dic
     fig, axes = plt.subplots(2, 1, figsize=(max(8, 0.8 * len(labels) + 4), 9), sharex=True)
 
     for idx, metric in enumerate(metrics):
-        axes[0].bar(x + (idx - 1) * width, metric_rows[metric], width=width, label=metric)
-        axes[1].bar(x + (idx - 1) * width, rel_rows[metric], width=width, label=metric)
+        legend_name = phase_name(metric) if metric == "JlocQ" else f"{display_name(metric)} excess"
+        axes[0].bar(x + (idx - 1) * width, metric_rows[metric], width=width, label=legend_name)
+        axes[1].bar(x + (idx - 1) * width, rel_rows[metric], width=width, label=legend_name)
 
     axes[0].set_ylabel("excess")
     axes[0].set_title("Phase-null excess")
@@ -249,12 +257,12 @@ def save_profile_comparison_panel(path: Path, selected: list[dict[str, object]])
         original = item["original_profile"]
         phase_mean = item["phase_mean_profile"]
         k = np.arange(len(original))
-        ax.plot(k, original, marker="o", label="JlocQ original")
-        ax.plot(k, phase_mean, marker="s", label="JlocQ phase mean")
-        ax.plot(k, original - phase_mean, marker="^", label="excess")
+        ax.plot(k, original, marker="o", label=f"{display_name('JlocQ')} original")
+        ax.plot(k, phase_mean, marker="s", label=f"{display_name('JlocQ')} phase mean")
+        ax.plot(k, original - phase_mean, marker="^", label=phase_name("JlocQ"))
         ax.set_title(str(label))
         ax.set_xlabel("Scale index k")
-        ax.set_ylabel("JlocQ")
+        ax.set_ylabel(display_name("JlocQ"))
         ax.legend()
 
     fig.tight_layout()
@@ -313,12 +321,12 @@ def main() -> None:
             {
                 "label": label,
                 "source": source,
-                "C_abs": float(original_totals[0]),
+                "Cdetail_abs": float(original_totals[0]),
                 "O_abs": float(original_totals[1]),
                 "Odiv_abs": float(original_totals[2]),
-                "Jglob_abs": float(original_totals[3]),
+                "Jglobal_abs": float(original_totals[3]),
                 "Jloc_abs": float(original_totals[4]),
-                "JlocQ_abs": float(original_totals[5]),
+                "Jnested_abs": float(original_totals[5]),
             }
         )
 
@@ -379,7 +387,7 @@ def main() -> None:
                 {
                     "label": label,
                     "source": source,
-                    "metric": metric,
+                    "metric": display_name(metric),
                     "abs": abs_val,
                     "phase_mean": mean_val,
                     "phase_std": std_val,
@@ -387,6 +395,10 @@ def main() -> None:
                     "excess_pos": excess_pos,
                     "excess_z": excess_z,
                     "relative_excess": relative_excess(excess, abs_val),
+                    "Jphase": excess if metric == "JlocQ" else float("nan"),
+                    "Jphase_pos": excess_pos if metric == "JlocQ" else float("nan"),
+                    "Jphase_z": excess_z if metric == "JlocQ" else float("nan"),
+                    "Jphase_relative": relative_excess(excess, abs_val) if metric == "JlocQ" else float("nan"),
                 }
             )
 
@@ -484,12 +496,12 @@ def main() -> None:
 
     save_csv_rows(
         args.out_dir / "summary_abs.csv",
-        ["label", "source", "C_abs", "O_abs", "Odiv_abs", "Jglob_abs", "Jloc_abs", "JlocQ_abs"],
+        ["label", "source", "Cdetail_abs", "O_abs", "Odiv_abs", "Jglobal_abs", "Jloc_abs", "Jnested_abs"],
         summary_abs_rows,
     )
     save_csv_rows(
         args.out_dir / "summary_phase_null.csv",
-        ["label", "source", "metric", "abs", "phase_mean", "phase_std", "excess", "excess_pos", "excess_z", "relative_excess"],
+        ["label", "source", "metric", "abs", "phase_mean", "phase_std", "excess", "excess_pos", "excess_z", "relative_excess", "Jphase", "Jphase_pos", "Jphase_z", "Jphase_relative"],
         summary_phase_rows,
     )
     save_csv_rows(
@@ -536,7 +548,7 @@ def main() -> None:
     rel_rows = {"Jglob": [], "Jloc": [], "JlocQ": []}
     for label in labels_for_excess:
         for metric in ["Jglob", "Jloc", "JlocQ"]:
-            row = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == metric)
+            row = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == display_name(metric))
             metric_rows[metric].append(float(row["excess"]))
             rel_rows[metric].append(float(row["relative_excess"]))
     save_phase_null_excess_panel(args.out_dir / "phase_null_excess_panel.png", labels_for_excess, metric_rows, rel_rows)
@@ -558,18 +570,29 @@ def main() -> None:
         save_profile_comparison_panel(args.out_dir / "profile_comparison_panel.png", selected)
 
     print("Phase-null benchmark summary")
-    print("label                 Jglob_abs  Jglob_exc   Jloc_abs   Jloc_exc   JlocQ_abs  JlocQ_exc")
+    if args.diagnostics_level == "full":
+        print("label                 Jglobal_abs Jglobal_exc Jloc_abs   Jloc_exc   Jnested_abs Jphase")
+    else:
+        print("label                 Jnested_abs phase_mean  Jphase      Jphase_rel  Jphase_z")
     for label in generated_labels:
         abs_row = next(r for r in summary_abs_rows if r["label"] == label)
-        jglob = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == "Jglob")
+        jglob = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == "Jglobal")
         jloc = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == "Jloc")
-        jlocq = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == "JlocQ")
-        print(
-            f"{label:<20s} "
-            f"{float(abs_row['Jglob_abs']):>10.4g} {float(jglob['excess']):>10.4g} "
-            f"{float(abs_row['Jloc_abs']):>10.4g} {float(jloc['excess']):>10.4g} "
-            f"{float(abs_row['JlocQ_abs']):>10.4g} {float(jlocq['excess']):>10.4g}"
-        )
+        jlocq = next(r for r in summary_phase_rows if r["label"] == label and r["metric"] == "Jnested")
+        if args.diagnostics_level == "full":
+            print(
+                f"{label:<20s} "
+                f"{float(abs_row['Jglobal_abs']):>11.4g} {float(jglob['excess']):>11.4g} "
+                f"{float(abs_row['Jloc_abs']):>10.4g} {float(jloc['excess']):>10.4g} "
+                f"{float(abs_row['Jnested_abs']):>11.4g} {float(jlocq['Jphase']):>10.4g}"
+            )
+        else:
+            print(
+                f"{label:<20s} "
+                f"{float(abs_row['Jnested_abs']):>11.4g} {float(jlocq['phase_mean']):>10.4g} "
+                f"{float(jlocq['Jphase']):>10.4g} {float(jlocq['Jphase_relative']):>11.4g} "
+                f"{float(jlocq['Jphase_z']):>9.4g}"
+            )
 
 
 if __name__ == "__main__":

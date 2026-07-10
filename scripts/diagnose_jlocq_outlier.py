@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from mssc.complexity import complexity_profile
+from mssc.display import display_name, phase_name
 from mssc.image_io import load_image, save_image
 from mssc.orientation import (
     haar_channel_energy_profile,
@@ -111,6 +112,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sweep-wave-amplitude", default=None)
     parser.add_argument("--sweep-stripe-period", default=None)
     parser.add_argument("--sweep-wave-period", default=None)
+    parser.add_argument(
+        "--diagnostics-level",
+        choices=["core", "full"],
+        default="core",
+        help="Default summary detail level. Default: core.",
+    )
 
     parser.add_argument(
         "--offset-average",
@@ -505,8 +512,8 @@ def save_diagnostic_profiles_plot(path: Path, image: np.ndarray, data: dict[str,
     axes[0].set_title("Input image")
 
     axes[1].plot(k, data["C"], marker="o")  # type: ignore[arg-type]
-    axes[1].set_ylabel("C")
-    axes[1].set_title("Naive MSSC profile")
+    axes[1].set_ylabel("Cdetail")
+    axes[1].set_title(f"{display_name('C')}_k")
 
     axes[2].plot(k, data["Q"], marker="o")  # type: ignore[arg-type]
     axes[2].set_ylabel("Q")
@@ -516,9 +523,9 @@ def save_diagnostic_profiles_plot(path: Path, image: np.ndarray, data: dict[str,
     axes[3].set_ylabel("D")
     axes[3].set_title("Orientation entropy / diversity")
 
-    axes[4].plot(k, data["Jglob"], marker="o", label="Jglob")  # type: ignore[arg-type]
+    axes[4].plot(k, data["Jglob"], marker="o", label=display_name("Jglob"))  # type: ignore[arg-type]
     axes[4].plot(k, data["Jloc"], marker="o", label="Jloc")  # type: ignore[arg-type]
-    axes[4].plot(k, data["JlocQ"], marker="o", label="JlocQ")  # type: ignore[arg-type]
+    axes[4].plot(k, data["JlocQ"], marker="o", label=display_name("JlocQ"))  # type: ignore[arg-type]
     axes[4].set_ylabel("J")
     axes[4].set_title("Scale-orientation entropy profiles")
     axes[4].legend()
@@ -888,18 +895,21 @@ def run_phase_null(
     for idx, key in enumerate(TOTAL_KEYS):
         summary_rows.append(
             {
-                "metric": key,
+                "metric": display_name(key),
                 "original": float(original_totals[idx]),
                 "phase_mean": float(total_mean[idx]),
                 "phase_std": float(total_std[idx]),
                 "excess": float(excess[idx]),
                 "excess_pos": float(excess_pos[idx]),
                 "excess_z": float(excess_z[idx]),
+                "Jphase": float(excess[idx]) if key == "JlocQ" else float("nan"),
+                "Jphase_pos": float(excess_pos[idx]) if key == "JlocQ" else float("nan"),
+                "Jphase_z": float(excess_z[idx]) if key == "JlocQ" else float("nan"),
             }
         )
     save_csv_rows(
         out_dir / "phase_null_summary.csv",
-        ["metric", "original", "phase_mean", "phase_std", "excess", "excess_pos", "excess_z"],
+        ["metric", "original", "phase_mean", "phase_std", "excess", "excess_pos", "excess_z", "Jphase", "Jphase_pos", "Jphase_z"],
         summary_rows,
     )
 
@@ -954,14 +964,14 @@ def save_phase_null_profiles_plot(
     axes[4].plot(k, original_data["JlocQ"], marker="o", label="original")  # type: ignore[arg-type]
     axes[4].plot(k, profile_mean[:, 7], marker="s", label="phase mean")
     axes[4].fill_between(k, profile_mean[:, 7] - profile_std[:, 7], profile_mean[:, 7] + profile_std[:, 7], alpha=0.2)
-    axes[4].set_ylabel("JlocQ")
-    axes[4].set_title("JlocQ_k vs phase-null mean")
+    axes[4].set_ylabel(display_name("JlocQ"))
+    axes[4].set_title(f"{display_name('JlocQ')}_k vs phase-null mean")
     axes[4].legend()
 
     axes[5].plot(k, np.asarray(original_data["JlocQ"]) - profile_mean[:, 7], marker="o")
     axes[5].set_ylabel("excess")
     axes[5].set_xlabel("Scale index k")
-    axes[5].set_title("JlocQ_k original - phase-null mean")
+    axes[5].set_title(f"{phase_name('JlocQ')}_k")
 
     fig.tight_layout()
     fig.savefig(path, dpi=200)
@@ -1159,16 +1169,23 @@ def print_terminal_summary(
     offset_result: dict[str, np.ndarray | list[tuple[int, int]]] | None,
     phase_null_result: dict[str, np.ndarray | np.ndarray | dict[str, np.ndarray]] | None,
     offset_phase_result: dict[str, np.ndarray] | None,
+    diagnostics_level: str,
 ) -> None:
     summary = data["summary"]  # type: ignore[assignment]
 
     print_top_scale_summary(data)
     print_channel_summary(data)
     print()
-    print("JlocQ diagnostics")
+    print(f"{display_name('JlocQ')} diagnostics")
     print()
     print("Unshifted original:")
-    print(f"  JlocQ = {summary['JlocQ_total']:.12g}")
+    print(f"  {display_name('C')} = {summary['C_total']:.12g}")
+    print(f"  {display_name('Jglob')} = {summary['Jglob_total']:.12g}")
+    print(f"  {display_name('JlocQ')} = {summary['JlocQ_total']:.12g}")
+    if diagnostics_level == "full":
+        print(f"  O = {summary['O_total']:.12g}")
+        print(f"  Odiv = {summary['Odiv_total']:.12g}")
+        print(f"  Jloc = {summary['Jloc_total']:.12g}")
 
     if offset_result is not None:
         mean_val = offset_result["total_mean"][TOTAL_KEYS.index("JlocQ")]  # type: ignore[index]
@@ -1190,8 +1207,8 @@ def print_terminal_summary(
         print()
         print("Phase null:")
         print(f"  mean ± std = {mean_val:.12g} ± {std_val:.12g}")
-        print(f"  excess = {excess_val:.12g}")
-        print(f"  excess z = {z_val:.12g}")
+        print(f"  {phase_name('JlocQ')} = {excess_val:.12g}")
+        print(f"  {phase_name('JlocQ')} z = {z_val:.12g}")
 
     if offset_phase_result is not None:
         original_mean = offset_phase_result["original_mean"][TOTAL_KEYS.index("JlocQ")]
@@ -1201,17 +1218,17 @@ def print_terminal_summary(
         z_val = offset_phase_result["excess_z"][TOTAL_KEYS.index("JlocQ")]
         print()
         print("Offset + phase null:")
-        print(f"  original offset mean = {original_mean:.12g}")
+        print(f"  {display_name('JlocQ')} offset mean = {original_mean:.12g}")
         print(f"  phase offset mean ± std = {phase_mean:.12g} ± {phase_std:.12g}")
-        print(f"  excess = {excess:.12g}")
-        print(f"  excess z = {z_val:.12g}")
+        print(f"  {phase_name('JlocQ')} = {excess:.12g}")
+        print(f"  {phase_name('JlocQ')} z = {z_val:.12g}")
 
     print()
     print("Hints:")
-    print("  If offset averaging strongly reduces JlocQ, the outlier is likely dyadic-grid resonance.")
-    print("  If offset averaging does not reduce JlocQ, the pattern is genuinely high for this block-Haar observer.")
-    print("  If phase excess is small, high absolute JlocQ is mostly explained by phase-scramble-preserved spectral or edge statistics.")
-    print("  If phase excess is large, original phase organization contributes substantially beyond the null.")
+    print(f"  If offset averaging strongly reduces {display_name('JlocQ')}, the outlier is likely dyadic-grid resonance.")
+    print(f"  If offset averaging does not reduce {display_name('JlocQ')}, the pattern is genuinely high for this block-Haar observer.")
+    print(f"  If {phase_name('JlocQ')} is small, high absolute {display_name('JlocQ')} is mostly explained by phase-scramble-preserved spectral or edge statistics.")
+    print(f"  If {phase_name('JlocQ')} is large, original phase organization contributes substantially beyond the null.")
 
 
 def main() -> None:
@@ -1302,7 +1319,13 @@ def main() -> None:
         run_sweeps(args, args.out_dir)
 
     print(f"Saved diagnostics to: {args.out_dir}")
-    print_terminal_summary(data, offset_result, phase_null_result, offset_phase_result)
+    print_terminal_summary(
+        data,
+        offset_result,
+        phase_null_result,
+        offset_phase_result,
+        diagnostics_level=args.diagnostics_level,
+    )
 
 
 if __name__ == "__main__":
