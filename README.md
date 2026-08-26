@@ -34,6 +34,7 @@ mssc/
   visualize.py
 
 scripts/
+  benchmark_complexity_tree.py
   benchmark_toy_panel.py
   compute_complexity.py
   diagnose_jlocq_outlier.py
@@ -90,30 +91,58 @@ Cdetail = current C
 The current public-facing block-Haar metrics are:
 
 ```text
-Jglobal = current Jglob
+Jstruct = global scale-orientation catalog entropy built from the same
+          local weights as Jnested
 Jnested = current JlocQ
+Jhetero = Jstruct - Jnested
 Jphase  = Jnested(original) - mean phase-null Jnested
+Jspectral = mean phase-null Jnested
 ```
 
 Interpretation:
 
 ```text
-Jglobal:
-  global scale-orientation diversity; sensitive to patchwork
+Jstruct:
+  total organized diversity of scale-orientation structure present
+  anywhere in the image
 
 Jnested:
-  locally organized multiscale RG-history richness; current working candidate
+  locally organized multiscale RG-history richness
+
+Jhetero:
+  diversity between local RG histories across space
+
+Jspectral:
+  nested complexity expected from the Fourier amplitude spectrum alone
+  under the phase-scramble null
 
 Jphase:
-  excess of Jnested over a phase-scrambled spectrum-preserving null
+  signed phase-specific correction to Jnested
 ```
 
-Known failure modes remain important:
+The current conceptual tree is:
+
+```text
+Jstruct = Jnested + Jhetero
+Jnested = Jspectral + Jphase
+```
+
+The intended contrast is:
+
+```text
+wavy_stripes:
+  high Jnested, comparatively low Jhetero
+
+patchwork:
+  simpler local histories, but higher Jhetero
+```
+
+Known caveats remain important:
 
 - `Cdetail` can be high for noise and simple high-contrast periodic patterns.
-- `Jglobal` can over-reward spatial patchwork.
 - `Jnested` can over-reward smoothly deformed regular patterns such as wavy stripes.
-- `Jphase` can suppress fractal or textural structure already encoded in the power spectrum.
+- `Jphase` can be small or negative even for genuinely structured fractal or textural images if much of their nesting is already encoded in the power spectrum.
+- Legacy `Jglobal` remains useful as a failure-mode diagnostic, but it is no longer the main global branch in the conceptual decomposition.
 
 ## Supporting Diagnostics
 
@@ -407,6 +436,52 @@ Current outputs:
 
 The script also prints rankings by the selected metric and emits simple warnings when benchmark orderings look suspicious.
 
+### `benchmark_complexity_tree.py`
+
+Runs the current canonical structural decomposition on the benchmark image set.
+
+```bash
+PYTHONPATH=. python3 scripts/benchmark_complexity_tree.py \
+  --size 512 \
+  --phase-null-seeds 20 \
+  --out-dir diagnostics/complexity_tree
+```
+
+Main user-facing quantities:
+
+- `Cdetail`
+- `Jstruct`
+- `Jnested`
+- `Jhetero`
+- `Jspectral`
+- `Jphase`
+- `phase_z`
+
+Important options:
+
+- `--size INT` (default: `512`; must be power-of-two)
+- `--seed INT` (default: `123`)
+- `--phase-null-seeds INT` (default: `20`)
+- `--n-steps INT`
+- `--connectivity 4|8`
+- `--out-dir PATH`
+- `--save-images`
+
+Current outputs:
+
+- `complexity_tree_summary.csv`
+- `complexity_tree_profiles.csv`
+- `complexity_tree_bars.png`
+- `nested_phase_decomposition.png`
+- `nested_vs_heterogeneous.png`
+
+This script explicitly checks the numerical decompositions:
+
+```text
+Jstruct = Jnested + Jhetero
+Jnested = Jspectral + Jphase
+```
+
 ### `diagnose_jlocq_outlier.py`
 
 Diagnoses why a particular image produces a high `Jnested` (`JlocQ` in the current code) by decomposing the current local-Q entropy pipeline into its ingredients.
@@ -491,8 +566,8 @@ PYTHONPATH=. python3 scripts/phase_null_benchmark.py \
 Core-mode outputs emphasize:
 
 - `Cdetail`
-- `Jglobal`
 - `Jnested`
+- `Jspectral`
 - `Jphase`
 
 Important options:
@@ -513,7 +588,7 @@ The package exports the main helpers through `mssc/__init__.py`, including:
 - `load_image`, `save_image`
 - `rg_layers`, `plot_rg_layers`
 - `tile_shuffle`, `phase_scramble`, `power_spectrum`
-- orientation-profile helpers such as `local_orientation_coherence_profile`, `orientation_entropy_profile`, `organized_profile`, `orientation_diverse_organized_profile`, `scale_orientation_entropy_profile`, `local_scale_orientation_entropy_profile`, and `local_scale_orientation_entropy_profile_with_local_q`
+- orientation-profile helpers such as `local_orientation_coherence_profile`, `orientation_entropy_profile`, `organized_profile`, `orientation_diverse_organized_profile`, `scale_orientation_entropy_profile`, `local_scale_orientation_entropy_profile`, `local_scale_orientation_entropy_profile_with_local_q`, `local_scale_orientation_weights`, `structural_complexity_profile`, and `heterogeneous_complexity_profile`
 
 ## Limitations
 
@@ -522,4 +597,4 @@ The package exports the main helpers through `mssc/__init__.py`, including:
 - `size="auto"` resizes to a square without preserving original aspect ratio.
 - RGB images are treated as vector-valued arrays without color-space correction.
 - Saved phase-scrambled images are display exports, not quantitative source data.
-- This is research code: `Jnested` (`JlocQ`), `Jglobal` (`Jglob`), `Jphase`, and the legacy diagnostics should be treated as exploratory and observer-dependent.
+- This is research code: `Jstruct`, `Jnested` (`JlocQ`), `Jhetero`, `Jspectral`, `Jphase`, legacy `Jglobal` (`Jglob`), and the older diagnostics should be treated as exploratory and observer-dependent.

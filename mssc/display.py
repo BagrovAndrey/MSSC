@@ -2,8 +2,11 @@ from __future__ import annotations
 
 DISPLAY_NAMES = {
     "C": "Cdetail",
+    "Jstruct": "Jstruct",
     "Jglob": "Jglobal",
     "JlocQ": "Jnested",
+    "Jhetero": "Jhetero",
+    "Jspectral": "Jspectral",
 }
 
 LEGACY_NAMES = {

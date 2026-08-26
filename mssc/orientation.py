@@ -663,3 +663,209 @@ def local_scale_orientation_entropy_profile_with_local_q(
         JlocQ[k] = float(np.mean(np.sum(terms, axis=-1)))
 
     return JlocQ
+
+
+def local_scale_orientation_weights(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+) -> np.ndarray:
+    """
+    Return the local organized channel weights used by Jnested.
+
+    W_{k,alpha}(x) = max(q_k(x), 0) E_{k,alpha}(x)
+
+    The result has shape (n_steps, L, L, d).
+    """
+    E = np.asarray(lifted_channel_energy_profile, dtype=float)
+    q = np.asarray(lifted_local_q_profile, dtype=float)
+
+    if E.ndim != 4:
+        raise ValueError("lifted_channel_energy_profile must have shape (n_steps, L, L, d)")
+    if q.ndim != 3:
+        raise ValueError("lifted_local_q_profile must have shape (n_steps, L, L)")
+    if E.shape[:3] != q.shape:
+        raise ValueError("lifted_channel_energy_profile and lifted_local_q_profile must agree on (n_steps, L, L)")
+
+    return E * np.maximum(q, 0.0)[..., None]
+
+
+def structural_complexity_profile_from_weights(
+    local_weight_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return the global scale-orientation catalog profile from local weights.
+
+    For local weights W_{k,alpha}(x), define the global channel masses
+
+        W_{k,alpha} = sum_x W_{k,alpha}(x)
+
+    and the global channel distribution p(k, alpha) = W_{k,alpha} / sum W.
+
+    This function returns the per-scale entropy contribution profile
+
+        Jstruct_k = -barW sum_alpha p(k, alpha) log p(k, alpha),
+
+    where barW is the mean total organized weight per pixel.
+    """
+    W = np.asarray(local_weight_profile, dtype=float)
+
+    if W.ndim != 4:
+        raise ValueError("local_weight_profile must have shape (n_steps, L, L, d)")
+
+    n_steps = W.shape[0]
+    total_weight = float(np.sum(W))
+
+    if total_weight <= eps:
+        return np.zeros(n_steps, dtype=float)
+
+    n_pix = W.shape[1] * W.shape[2]
+    channel_mass = np.sum(W, axis=(1, 2))
+    p = channel_mass / total_weight
+
+    profile = np.zeros_like(channel_mass)
+    mask = p > eps
+    profile[mask] = -p[mask] * np.log(p[mask])
+
+    return (total_weight / n_pix) * np.sum(profile, axis=1)
+
+
+def structural_complexity_from_weights(
+    local_weight_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> float:
+    """
+    Return Jstruct from the same local weights used by Jnested.
+    """
+    return float(np.sum(structural_complexity_profile_from_weights(local_weight_profile, eps=eps)))
+
+
+def heterogeneous_complexity_profile_from_weights(
+    local_weight_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return the scale-resolved heterogeneous contribution profile.
+
+    By construction:
+
+        Jhetero_k = Jstruct_k - Jnested_k
+    """
+    W = np.asarray(local_weight_profile, dtype=float)
+
+    if W.ndim != 4:
+        raise ValueError("local_weight_profile must have shape (n_steps, L, L, d)")
+
+    struct_profile = structural_complexity_profile_from_weights(W, eps=eps)
+    nested_profile = local_scale_orientation_entropy_profile_from_weights(W, eps=eps)
+    hetero_profile = struct_profile - nested_profile
+
+    tiny_negative = hetero_profile > -1e-12
+    hetero_profile = hetero_profile.copy()
+    hetero_profile[tiny_negative] = np.maximum(hetero_profile[tiny_negative], 0.0)
+
+    if np.any(hetero_profile < -1e-12):
+        raise ValueError("heterogeneous profile became substantially negative; check weight construction")
+
+    return hetero_profile
+
+
+def heterogeneous_complexity_from_weights(
+    local_weight_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> float:
+    """
+    Return Jhetero = Jstruct - Jnested from local weights.
+    """
+    return float(np.sum(heterogeneous_complexity_profile_from_weights(local_weight_profile, eps=eps)))
+
+
+def local_scale_orientation_entropy_profile_from_weights(
+    local_weight_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Compute Jnested directly from local organized weights W_{k,alpha}(x).
+    """
+    W = np.asarray(local_weight_profile, dtype=float)
+
+    if W.ndim != 4:
+        raise ValueError("local_weight_profile must have shape (n_steps, L, L, d)")
+
+    Jnested = np.zeros(W.shape[0], dtype=float)
+    Wtot = np.sum(W, axis=(0, 3))
+    valid_points = Wtot > eps
+
+    if not np.any(valid_points):
+        return Jnested
+
+    for k in range(W.shape[0]):
+        ratio = np.ones_like(W[k])
+        np.divide(W[k], Wtot[..., None], out=ratio, where=valid_points[..., None])
+
+        terms = np.zeros_like(W[k])
+        mask = (W[k] > eps) & valid_points[..., None]
+        terms[mask] = -W[k][mask] * np.log(ratio[mask])
+        Jnested[k] = float(np.mean(np.sum(terms, axis=-1)))
+
+    return Jnested
+
+
+def structural_complexity_profile(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return Jstruct_k using the same local weights as Jnested.
+    """
+    W = local_scale_orientation_weights(
+        lifted_channel_energy_profile,
+        lifted_local_q_profile,
+    )
+    return structural_complexity_profile_from_weights(W, eps=eps)
+
+
+def structural_complexity(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> float:
+    """
+    Return Jstruct using the same local weights as Jnested.
+    """
+    W = local_scale_orientation_weights(
+        lifted_channel_energy_profile,
+        lifted_local_q_profile,
+    )
+    return structural_complexity_from_weights(W, eps=eps)
+
+
+def heterogeneous_complexity_profile(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> np.ndarray:
+    """
+    Return Jhetero_k using the same local weights as Jnested.
+    """
+    W = local_scale_orientation_weights(
+        lifted_channel_energy_profile,
+        lifted_local_q_profile,
+    )
+    return heterogeneous_complexity_profile_from_weights(W, eps=eps)
+
+
+def heterogeneous_complexity(
+    lifted_channel_energy_profile: np.ndarray,
+    lifted_local_q_profile: np.ndarray,
+    eps: float = 1e-15,
+) -> float:
+    """
+    Return Jhetero using the same local weights as Jnested.
+    """
+    W = local_scale_orientation_weights(
+        lifted_channel_energy_profile,
+        lifted_local_q_profile,
+    )
+    return heterogeneous_complexity_from_weights(W, eps=eps)

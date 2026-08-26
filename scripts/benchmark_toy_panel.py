@@ -4,7 +4,6 @@ import argparse
 import csv
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from mssc.complexity import complexity_profile, max_steps
@@ -23,6 +22,12 @@ from mssc.orientation import (
     scale_orientation_entropy_profile,
 )
 from scripts.diagnose_jlocq_outlier import make_wavy_stripes
+
+
+def require_matplotlib():
+    import matplotlib.pyplot as plt
+
+    return plt
 
 
 def is_power_of_two(n: int) -> bool:
@@ -293,6 +298,7 @@ def save_benchmark_panel(
     metric: str,
     diagnostics_level: str,
 ) -> None:
+    plt = require_matplotlib()
     names = list(images.keys())
     fig, axes = plt.subplots(1, len(names), figsize=(2.6 * len(names), 2.9))
 
@@ -321,6 +327,7 @@ def save_profile_plot(
     profiles_by_name: dict[str, dict[str, np.ndarray]],
     metric: str,
 ) -> None:
+    plt = require_matplotlib()
     fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=False)
 
     for name, profiles in profiles_by_name.items():
