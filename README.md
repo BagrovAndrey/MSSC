@@ -2,11 +2,12 @@
 
 Minimal Python tools for experimenting with multi-scale structural complexity (MSSC) on images.
 
-The repository is intentionally small and NumPy-based. It currently contains:
+The repository is intentionally small and NumPy-based. The current MVP studies one fixed image observer:
 
-- A basic real-space MSSC profile based on repeated `2 x 2` block averaging.
-- Experimental orientation-aware diagnostics built on local Haar-like detail vectors.
-- CLI scripts for analysis, scrambling comparisons, toy-image generation, RG-layer visualization, and benchmark panels.
+- `2 x 2` non-overlapping block averaging
+- nearest-neighbor lifting back to the finer grid
+- Haar-like local detail channels `hx`, `hy`, `hxy`
+- local orientation coherence `q_k(x)`
 
 ## Installation
 
@@ -47,7 +48,18 @@ scripts/
 
 See [METRICS.md](METRICS.md) for the canonical metric definitions, hierarchy, and current failure modes.
 
-## What It Computes
+## Canonical Benchmark
+
+The primary MVP benchmark is:
+
+```bash
+PYTHONPATH=. python3 scripts/benchmark_complexity_tree.py \
+  --size 512 \
+  --phase-null-seeds 20 \
+  --out-dir diagnostics/complexity_tree
+```
+
+## Core MSSC Quantity
 
 An image is treated as either:
 
@@ -86,7 +98,7 @@ Cdetail = current C
 
 `Cdetail` is the scale-resolved discarded detail energy. It is the protocol-core quantity, but it is not a complete complexity measure by itself: noise and simple high-contrast periodic patterns can both score highly.
 
-## Current Block-Haar Extensions
+## Current Structural-Complexity MVP
 
 The current public-facing block-Haar metrics are:
 
@@ -96,7 +108,7 @@ Jstruct = global scale-orientation catalog entropy built from the same
 Jnested = current JlocQ
 Jhetero = Jstruct - Jnested
 Jphase  = Jnested(original) - mean phase-null Jnested
-Jspectral = mean phase-null Jnested
+Jspectral_null = mean phase-null Jnested
 ```
 
 Interpretation:
@@ -112,7 +124,7 @@ Jnested:
 Jhetero:
   diversity between local RG histories across space
 
-Jspectral:
+Jspectral_null:
   nested complexity expected from the Fourier amplitude spectrum alone
   under the phase-scramble null
 
@@ -124,7 +136,7 @@ The current conceptual tree is:
 
 ```text
 Jstruct = Jnested + Jhetero
-Jnested = Jspectral + Jphase
+Jnested = Jspectral_null + Jphase
 ```
 
 The intended contrast is:
@@ -144,7 +156,7 @@ Known caveats remain important:
 - `Jphase` can be small or negative even for genuinely structured fractal or textural images if much of their nesting is already encoded in the power spectrum.
 - Legacy `Jglobal` remains useful as a failure-mode diagnostic, but it is no longer the main global branch in the conceptual decomposition.
 
-## Supporting Diagnostics
+## Supporting And Exploratory Diagnostics
 
 The current block-Haar observer also uses:
 
@@ -152,13 +164,13 @@ The current block-Haar observer also uses:
 - `q_k(x)`: spatially local coherence map
 - `D_k`: within-scale orientation diversity
 
-## Legacy Diagnostics
-
-The following remain implemented for comparison and debugging, but they are no longer the default public-facing metrics:
+Additional historical diagnostics remain implemented for comparison and debugging:
 
 - `O_k`
 - `Odiv_k`
 - `Jloc_k`
+- legacy `Jglobal`
+- legacy code name `JlocQ == Jnested`
 
 ## Image Loading Behavior
 
@@ -208,7 +220,9 @@ Phase scramble:
 
 ## Scripts
 
-### `compute_complexity.py`
+### Canonical / Current MVP
+
+#### `compute_complexity.py`
 
 Computes the naive MSSC profile `C_k`.
 
@@ -232,7 +246,7 @@ Outputs:
 - Optional CSV with columns `k, C_k`.
 - Optional line plot of the profile.
 
-### `visualize_layers.py`
+#### `visualize_layers.py`
 
 Saves the original image and successive coarse-grained layers.
 
@@ -252,7 +266,55 @@ Important options:
 
 Each layer panel includes its scale index and, for `k > 0`, the previous-step partial complexity.
 
-### `shuffle_compare.py`
+#### `benchmark_complexity_tree.py`
+
+Runs the canonical structural decomposition on the benchmark image set.
+
+```bash
+PYTHONPATH=. python3 scripts/benchmark_complexity_tree.py \
+  --size 512 \
+  --phase-null-seeds 20 \
+  --out-dir diagnostics/complexity_tree
+```
+
+Main user-facing quantities:
+
+- `Cdetail`
+- `Jstruct`
+- `Jnested`
+- `Jhetero`
+- `Jspectral_null`
+- `Jphase`
+- `phase_z`
+
+Important options:
+
+- `--size INT` (default: `512`; must be power-of-two)
+- `--seed INT` (default: `123`)
+- `--phase-null-seeds INT` (default: `20`)
+- `--n-steps INT`
+- `--connectivity 4|8`
+- `--out-dir PATH`
+- `--save-images`
+
+Current outputs:
+
+- `complexity_tree_summary.csv`
+- `complexity_tree_profiles.csv`
+- `complexity_tree_bars.png`
+- `nested_phase_decomposition.png`
+- `nested_vs_heterogeneous.png`
+
+This script explicitly checks the numerical decompositions:
+
+```text
+Jstruct = Jnested + Jhetero
+Jnested = Jspectral_null + Jphase
+```
+
+### General Comparison Utility
+
+#### `shuffle_compare.py`
 
 Compares an image against a scrambled version using both naive and orientation-aware profiles.
 
@@ -296,8 +358,9 @@ Current defaults and options:
 Core-mode summaries and plots focus on:
 
 - `Cdetail`
-- `Jglobal`
+- `Jstruct`
 - `Jnested`
+- `Jhetero`
 
 Full mode additionally exposes:
 
@@ -305,6 +368,7 @@ Full mode additionally exposes:
 - `D`
 - `O`
 - `Odiv`
+- `Jglobal`
 - `Jloc`
 
 The comparison CSV contains:
@@ -319,12 +383,14 @@ The comparison plot includes:
 
 - original and scrambled images
 - `C_k`
-- `Q_k`
-- `D_k`
-- `O_k` and `Odiv_k`
-- `Jglob_k`, `Jloc_k`, and `JlocQ_k`
+- core mode: `Jstruct_k`, `Jnested_k`, `Jhetero_k`
+- full mode: `Q_k`, `D_k`, `O_k`, `Odiv_k`, `Jglob_k`, `Jloc_k`, `JlocQ_k`
 
-### `generate_toy_images.py`
+This script compares one original image to one scrambled realization. A single phase-scrambled image is not `Jphase`; `Jphase` requires an ensemble mean and belongs to the phase-null workflow.
+
+### Data-Preparation Helpers
+
+#### `generate_toy_images.py`
 
 Writes a small set of canonical toy images.
 
@@ -348,7 +414,7 @@ Important options:
 - `--stripe-width INT` (default: `16`)
 - `--checker-tile INT` (default: `16`)
 
-### `make_binary_image.py`
+#### `make_binary_image.py`
 
 Converts an arbitrary image into a square binary black/white PNG.
 
@@ -399,7 +465,9 @@ test_images/<input_stem>_binary.png
 
 The saved image is suitable as a clean binary input for later MSSC experiments on synthetic or thresholded real-world shapes.
 
-### `benchmark_toy_panel.py`
+### Exploratory / Historical Diagnostics
+
+#### `benchmark_toy_panel.py`
 
 Generates synthetic benchmark arrays in memory, analyzes them, and writes summary artifacts.
 
@@ -434,57 +502,11 @@ Current outputs:
 - `benchmark_panel.png`
 - `benchmark_profiles.png`
 
-The script also prints rankings by the selected metric and emits simple warnings when benchmark orderings look suspicious.
+This script is exploratory and historical. The canonical MVP benchmark is `benchmark_complexity_tree.py`.
 
-### `benchmark_complexity_tree.py`
+#### `diagnose_jlocq_outlier.py`
 
-Runs the current canonical structural decomposition on the benchmark image set.
-
-```bash
-PYTHONPATH=. python3 scripts/benchmark_complexity_tree.py \
-  --size 512 \
-  --phase-null-seeds 20 \
-  --out-dir diagnostics/complexity_tree
-```
-
-Main user-facing quantities:
-
-- `Cdetail`
-- `Jstruct`
-- `Jnested`
-- `Jhetero`
-- `Jspectral`
-- `Jphase`
-- `phase_z`
-
-Important options:
-
-- `--size INT` (default: `512`; must be power-of-two)
-- `--seed INT` (default: `123`)
-- `--phase-null-seeds INT` (default: `20`)
-- `--n-steps INT`
-- `--connectivity 4|8`
-- `--out-dir PATH`
-- `--save-images`
-
-Current outputs:
-
-- `complexity_tree_summary.csv`
-- `complexity_tree_profiles.csv`
-- `complexity_tree_bars.png`
-- `nested_phase_decomposition.png`
-- `nested_vs_heterogeneous.png`
-
-This script explicitly checks the numerical decompositions:
-
-```text
-Jstruct = Jnested + Jhetero
-Jnested = Jspectral + Jphase
-```
-
-### `diagnose_jlocq_outlier.py`
-
-Diagnoses why a particular image produces a high `Jnested` (`JlocQ` in the current code) by decomposing the current local-Q entropy pipeline into its ingredients.
+Diagnoses why a particular image produces a high `Jnested` (`JlocQ`, the legacy code name) by decomposing the current local-Q entropy pipeline into its ingredients.
 
 Analyze an existing image:
 
@@ -551,9 +573,9 @@ Current outputs:
 
 This script is diagnostic only. It does not change the definitions of the existing MSSC-derived metrics.
 
-### `phase_null_benchmark.py`
+#### `phase_null_benchmark.py`
 
-Runs a batch benchmark that compares absolute metrics with their excess over a phase-scrambled null ensemble.
+Runs an exploratory historical benchmark that compares absolute metrics with their excess over a phase-scrambled null ensemble.
 
 ```bash
 PYTHONPATH=. python3 scripts/phase_null_benchmark.py \
@@ -567,7 +589,7 @@ Core-mode outputs emphasize:
 
 - `Cdetail`
 - `Jnested`
-- `Jspectral`
+- `Jspectral_null`
 - `Jphase`
 
 Important options:
@@ -597,4 +619,4 @@ The package exports the main helpers through `mssc/__init__.py`, including:
 - `size="auto"` resizes to a square without preserving original aspect ratio.
 - RGB images are treated as vector-valued arrays without color-space correction.
 - Saved phase-scrambled images are display exports, not quantitative source data.
-- This is research code: `Jstruct`, `Jnested` (`JlocQ`), `Jhetero`, `Jspectral`, `Jphase`, legacy `Jglobal` (`Jglob`), and the older diagnostics should be treated as exploratory and observer-dependent.
+- This is research code: `Jstruct`, `Jnested` (`JlocQ`), `Jhetero`, `Jspectral_null`, `Jphase`, legacy `Jglobal` (`Jglob`), and the older diagnostics should be treated as exploratory and observer-dependent.

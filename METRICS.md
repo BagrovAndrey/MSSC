@@ -6,6 +6,20 @@ The purpose is to keep one stable vocabulary while preserving older exploratory 
 
 None of the orientation-aware quantities below should yet be treated as a universal or final definition of complexity. They are specific to the current `2 x 2` block-averaging / Haar-detail observer.
 
+## Current Tree
+
+```text
+Structural complexity Jstruct
+|
++-- Nested complexity Jnested
+|   |
+|   +-- spectral-null baseline Jspectral_null
+|   |
+|   +-- phase-specific signed correction Jphase
+|
++-- Heterogeneous complexity Jhetero
+```
+
 ## 1. Core MSSC quantity
 
 ### `Cdetail` (`C` in the current code)
@@ -175,6 +189,10 @@ Canonical interpretation:
 Jhetero = diversity between local RG histories across space
 ```
 
+Important limitation:
+
+`Jhetero` detects that different local structural types occur at different positions, but it does not encode the geometry of how those regions are arranged. Spatially permuting whole local-history types can preserve `Jhetero`.
+
 Expected contrast:
 
 ```text
@@ -187,27 +205,29 @@ patchwork:
 
 Numerically, `Jhetero` should be non-negative up to tiny floating-point noise.
 
-### `Jspectral`
+### `Jspectral_null`
 
-`Jspectral` is the phase-null baseline of the nested branch:
+`Jspectral_null` is the phase-null baseline of the nested branch:
 
 ```text
-Jspectral = mean_seed Jnested(phase_scramble(original, seed))
+Jspectral_null = mean_seed Jnested(phase_scramble(original, seed))
 ```
 
 Canonical interpretation:
 
 ```text
-Jspectral = nested complexity expected from the Fourier amplitude
-            spectrum alone under the phase-scramble null
+Jspectral_null = nested complexity expected from the Fourier amplitude
+                 spectrum alone under the phase-scramble null
 ```
+
+This quantity depends on the chosen null model.
 
 ### `Jphase`
 
 `Jphase` is the signed phase-specific correction to the nested branch:
 
 ```text
-Jphase = Jnested(original) - Jspectral
+Jphase = Jnested(original) - Jspectral_null
 ```
 
 The corresponding profile is
@@ -245,13 +265,13 @@ The current conceptual hierarchy is:
 
 ```text
 Jstruct = Jnested + Jhetero
-Jnested = Jspectral + Jphase
+Jnested = Jspectral_null + Jphase
 ```
 
 Therefore
 
 ```text
-Jstruct = Jhetero + Jspectral + Jphase
+Jstruct = Jhetero + Jspectral_null + Jphase
 ```
 
 This is an additive decomposition relative to the phase-null model. Because `Jphase` is signed, it is not a decomposition into three positive fractions.
@@ -345,7 +365,7 @@ Jhetero   how strongly local RG histories differ across space
 ### Nested-branch decomposition
 
 ```text
-Jspectral how much of Jnested is explained by the preserved spectrum
+Jspectral_null how much of Jnested is explained by the preserved spectrum under the chosen null
 Jphase    signed phase-specific correction to the nested branch
 ```
 
@@ -381,7 +401,7 @@ Cdetail
 Jstruct
 Jnested
 Jhetero
-Jspectral
+Jspectral_null
 Jphase
 Jphase_z
 ```
@@ -436,7 +456,7 @@ Jnested:
 Jhetero:
     diversity between local RG histories across space
 
-Jspectral:
+Jspectral_null:
     nested complexity explained by the phase-scramble null
 
 Jphase:

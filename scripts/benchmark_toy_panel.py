@@ -399,7 +399,7 @@ def parse_n_steps(value: str) -> int | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate and benchmark synthetic multiscale images."
+        description="Exploratory historical benchmark for synthetic multiscale images. For the current MVP benchmark use scripts/benchmark_complexity_tree.py."
     )
     parser.add_argument("--size", type=int, default=512, help="Image size. Must be a power of two.")
     parser.add_argument("--seed", type=int, default=123, help="Seed for stochastic generators.")
@@ -468,6 +468,7 @@ def main() -> None:
     metric = selected_metric_name(args.metric, available_metrics)
 
     print(f"Selected metric for panel: {metric}")
+    print("Note: this script is exploratory. The canonical MVP benchmark is scripts/benchmark_complexity_tree.py.")
     print(f"Image size: {args.size}")
     print(f"RG steps: {n_steps if n_steps is not None else max_steps(args.size, block_size=2)}")
     print(f"Connectivity: {args.connectivity}")

@@ -51,7 +51,7 @@ def parse_csv_list(value: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark MSSC-style diagnostics against a phase-scrambled null model."
+        description="Exploratory historical benchmark for phase-null MSSC diagnostics. For the current MVP benchmark use scripts/benchmark_complexity_tree.py."
     )
     parser.add_argument(
         "--preset",
@@ -570,6 +570,7 @@ def main() -> None:
         save_profile_comparison_panel(args.out_dir / "profile_comparison_panel.png", selected)
 
     print("Phase-null benchmark summary")
+    print("Note: this script is exploratory. In the current MVP terminology, the phase-null mean of Jnested is Jspectral_null.")
     if args.diagnostics_level == "full":
         print("label                 Jglobal_abs Jglobal_exc Jloc_abs   Jloc_exc   Jnested_abs Jphase")
     else:

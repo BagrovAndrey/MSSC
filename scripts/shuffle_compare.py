@@ -11,9 +11,12 @@ from mssc.complexity import complexity_profile
 from mssc.display import display_name
 from mssc.image_io import load_image, save_image
 from mssc.orientation import (
+    heterogeneous_complexity_profile_from_weights,
     haar_channel_energy_profile,
     lifted_haar_channel_energy_profile,
     lifted_local_orientation_coherence_profile,
+    local_scale_orientation_entropy_profile_from_weights,
+    local_scale_orientation_weights,
     local_orientation_coherence_profile,
     local_scale_orientation_entropy_profile,
     local_scale_orientation_entropy_profile_with_local_q,
@@ -21,6 +24,7 @@ from mssc.orientation import (
     orientation_entropy_profile,
     organized_profile,
     scale_orientation_entropy_profile,
+    structural_complexity_profile_from_weights,
 )
 from mssc.shuffle import phase_scramble, tile_shuffle
 
@@ -107,6 +111,7 @@ def summarize_profiles(
     D: np.ndarray,
     O: np.ndarray,
     Odiv: np.ndarray,
+    Jstruct: np.ndarray,
     Jglob: np.ndarray,
     Jloc: np.ndarray,
     JlocQ: np.ndarray,
@@ -116,6 +121,7 @@ def summarize_profiles(
         "C_total": float(np.sum(C)),
         "O_total": float(np.sum(O)),
         "Odiv_total": float(np.sum(Odiv)),
+        "Jstruct_total": float(np.sum(Jstruct)),
         "Jglob_total": float(np.sum(Jglob)),
         "Jloc_total": float(np.sum(Jloc)),
         "JlocQ_total": float(np.sum(JlocQ)),
@@ -123,6 +129,7 @@ def summarize_profiles(
         "H_C": profile_entropy(C),
         "H_O": profile_entropy(O),
         "H_Odiv": profile_entropy(Odiv),
+        "H_Jstruct": profile_entropy(Jstruct),
         "H_Jglob": profile_entropy(Jglob),
         "H_Jloc": profile_entropy(Jloc),
         "H_JlocQ": profile_entropy(JlocQ),
@@ -130,6 +137,7 @@ def summarize_profiles(
         "S_C": entropic_complexity(C),
         "S_O": entropic_complexity(O),
         "S_Odiv": entropic_complexity(Odiv),
+        "S_Jstruct": entropic_complexity(Jstruct),
         "S_Jglob": entropic_complexity(Jglob),
         "S_Jloc": entropic_complexity(Jloc),
         "S_JlocQ": entropic_complexity(JlocQ),
@@ -275,7 +283,7 @@ def compute_all_profiles(
     block_size: int = 2,
     n_steps: int | None = None,
     connectivity: int = 4,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
     if block_size != 2:
         raise ValueError(
             "Orientation observables are currently implemented only for block_size=2"
@@ -312,9 +320,12 @@ def compute_all_profiles(
 
     O = organized_profile(C, Q)
     Odiv = orientation_diverse_organized_profile(C, Q, D)
+    W = local_scale_orientation_weights(lifted_E, lifted_Qmap)
+    Jstruct = structural_complexity_profile_from_weights(W)
     Jglob = scale_orientation_entropy_profile(E, Q)
     Jloc = local_scale_orientation_entropy_profile(lifted_E, Q)
-    JlocQ = local_scale_orientation_entropy_profile_with_local_q(lifted_E, lifted_Qmap)
+    JlocQ = local_scale_orientation_entropy_profile_from_weights(W)
+    Jhetero = heterogeneous_complexity_profile_from_weights(W)
 
     summary = summarize_profiles(
         C,
@@ -322,13 +333,18 @@ def compute_all_profiles(
         D,
         O,
         Odiv,
+        Jstruct,
         Jglob,
         Jloc,
         JlocQ,
         Qmap_mean=float(np.mean(lifted_Qmap)) if lifted_Qmap.size else 0.0,
     )
 
-    return C, Q, D, O, Odiv, Jglob, Jloc, JlocQ, summary
+    summary["Jhetero_total"] = float(np.sum(Jhetero))
+    summary["H_Jhetero"] = profile_entropy(Jhetero)
+    summary["S_Jhetero"] = entropic_complexity(Jhetero)
+
+    return C, Q, D, O, Odiv, Jstruct, Jglob, Jloc, JlocQ, summary
 
 
 def save_csv(
@@ -401,8 +417,9 @@ def save_csv(
 def format_summary_for_title(summary: dict[str, float]) -> str:
     return (
         f"{display_name('C')}={summary['C_total']:.4g}\n"
-        f"{display_name('Jglob')}={summary['Jglob_total']:.4g}, "
-        f"{display_name('JlocQ')}={summary['JlocQ_total']:.4g}"
+        f"{display_name('Jstruct')}={summary['Jstruct_total']:.4g}, "
+        f"{display_name('JlocQ')}={summary['JlocQ_total']:.4g}, "
+        f"{display_name('Jhetero')}={summary['Jhetero_total']:.4g}"
     )
 
 
@@ -415,6 +432,7 @@ def save_comparison_plot(
     original_D: np.ndarray,
     original_O: np.ndarray,
     original_Odiv: np.ndarray,
+    original_Jstruct: np.ndarray,
     original_Jglob: np.ndarray,
     original_Jloc: np.ndarray,
     original_JlocQ: np.ndarray,
@@ -423,6 +441,7 @@ def save_comparison_plot(
     scrambled_D: np.ndarray,
     scrambled_O: np.ndarray,
     scrambled_Odiv: np.ndarray,
+    scrambled_Jstruct: np.ndarray,
     scrambled_Jglob: np.ndarray,
     scrambled_Jloc: np.ndarray,
     scrambled_JlocQ: np.ndarray,
@@ -494,17 +513,22 @@ def save_comparison_plot(
         ax_O.set_title("Legacy ordered diagnostics")
         ax_O.legend()
 
-    ax_J.plot(k, original_Jglob, marker="^", label=f"original {display_name('Jglob')}")
-    ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} {display_name('Jglob')}")
     if diagnostics_level == "full":
+        ax_J.plot(k, original_Jglob, marker="^", label=f"original {display_name('Jglob')}")
+        ax_J.plot(k, scrambled_Jglob, marker="^", label=f"{scramble_label} {display_name('Jglob')}")
         ax_J.plot(k, original_Jloc, marker="d", label="original Jloc")
         ax_J.plot(k, scrambled_Jloc, marker="d", label=f"{scramble_label} Jloc")
+    else:
+        ax_J.plot(k, original_Jstruct, marker="s", label=f"original {display_name('Jstruct')}")
+        ax_J.plot(k, scrambled_Jstruct, marker="s", label=f"{scramble_label} {display_name('Jstruct')}")
+        ax_J.plot(k, original_Jstruct - original_JlocQ, marker="^", label=f"original {display_name('Jhetero')}")
+        ax_J.plot(k, scrambled_Jstruct - scrambled_JlocQ, marker="^", label=f"{scramble_label} {display_name('Jhetero')}")
     ax_J.plot(k, original_JlocQ, marker="x", label=f"original {display_name('JlocQ')}")
     ax_J.plot(k, scrambled_JlocQ, marker="x", label=f"{scramble_label} {display_name('JlocQ')}")
     ax_J.set_xlabel("Scale index k")
     ax_J.set_ylabel("J profile")
     ax_J.set_title(
-        "Global and nested scale-orientation entropy"
+        "Structural and nested complexity profiles"
         if diagnostics_level == "core"
         else "Global, local, and nested scale-orientation entropy"
     )
@@ -518,21 +542,25 @@ def save_comparison_plot(
 def print_summary(name: str, summary: dict[str, float], diagnostics_level: str) -> None:
     print(name)
     print(f"  {display_name('C')} = {summary['C_total']:.12g}")
-    print(f"  {display_name('Jglob')} = {summary['Jglob_total']:.12g}")
+    print(f"  {display_name('Jstruct')} = {summary['Jstruct_total']:.12g}")
     print(f"  {display_name('JlocQ')} = {summary['JlocQ_total']:.12g}")
+    print(f"  {display_name('Jhetero')} = {summary['Jhetero_total']:.12g}")
     if diagnostics_level == "full":
+        print(f"  {display_name('Jglob')} = {summary['Jglob_total']:.12g}")
         print(f"  O_total    = {summary['O_total']:.12g}")
         print(f"  Odiv_total = {summary['Odiv_total']:.12g}")
         print(f"  Jloc_total = {summary['Jloc_total']:.12g}")
         print(f"  H_C        = {summary['H_C']:.12g}")
         print(f"  H_O        = {summary['H_O']:.12g}")
         print(f"  H_Odiv     = {summary['H_Odiv']:.12g}")
+        print(f"  H_Jstruct  = {summary['H_Jstruct']:.12g}")
         print(f"  H_Jglob    = {summary['H_Jglob']:.12g}")
         print(f"  H_Jloc     = {summary['H_Jloc']:.12g}")
         print(f"  H_JlocQ    = {summary['H_JlocQ']:.12g}")
         print(f"  S_C        = {summary['S_C']:.12g}")
         print(f"  S_O        = {summary['S_O']:.12g}")
         print(f"  S_Odiv     = {summary['S_Odiv']:.12g}")
+        print(f"  S_Jstruct  = {summary['S_Jstruct']:.12g}")
         print(f"  S_Jglob    = {summary['S_Jglob']:.12g}")
         print(f"  S_Jloc     = {summary['S_Jloc']:.12g}")
         print(f"  S_JlocQ    = {summary['S_JlocQ']:.12g}")
@@ -571,6 +599,7 @@ def run_one_analysis(
         original_D,
         original_O,
         original_Odiv,
+        original_Jstruct,
         original_Jglob,
         original_Jloc,
         original_JlocQ,
@@ -588,6 +617,7 @@ def run_one_analysis(
         scrambled_D,
         scrambled_O,
         scrambled_Odiv,
+        scrambled_Jstruct,
         scrambled_Jglob,
         scrambled_Jloc,
         scrambled_JlocQ,
@@ -632,6 +662,7 @@ def run_one_analysis(
             original_D,
             original_O,
             original_Odiv,
+            original_Jstruct,
             original_Jglob,
             original_Jloc,
             original_JlocQ,
@@ -640,6 +671,7 @@ def run_one_analysis(
             scrambled_D,
             scrambled_O,
             scrambled_Odiv,
+            scrambled_Jstruct,
             scrambled_Jglob,
             scrambled_Jloc,
             scrambled_JlocQ,

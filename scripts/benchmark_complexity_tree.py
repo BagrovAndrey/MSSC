@@ -145,13 +145,13 @@ def compute_phase_nested_stats(
     phase_mean_profile = np.mean(phase_profiles_arr, axis=0)
     phase_std_profile = np.std(phase_profiles_arr, axis=0)
 
-    Jspectral = float(np.sum(phase_mean_profile))
+    Jspectral_null = float(np.sum(phase_mean_profile))
     phase_std = float(np.std(np.sum(phase_profiles_arr, axis=1)))
 
     return {
-        "Jspectral_profile": phase_mean_profile,
+        "Jspectral_null_profile": phase_mean_profile,
         "phase_profile_std": phase_std_profile,
-        "Jspectral_total": Jspectral,
+        "Jspectral_null_total": Jspectral_null,
         "phase_std": phase_std,
     }
 
@@ -181,14 +181,14 @@ def save_nested_phase_decomposition(path: Path, summary_rows: list[dict[str, flo
     plt = require_matplotlib()
     labels = [str(row["label"]) for row in summary_rows]
     nested = np.asarray([float(row["Jnested"]) for row in summary_rows], dtype=float)
-    spectral = np.asarray([float(row["Jspectral"]) for row in summary_rows], dtype=float)
+    spectral = np.asarray([float(row["Jspectral_null"]) for row in summary_rows], dtype=float)
     phase = np.asarray([float(row["Jphase"]) for row in summary_rows], dtype=float)
     x = np.arange(len(labels))
     width = 0.36
 
     fig, axes = plt.subplots(2, 1, figsize=(max(9, 1.2 * len(labels)), 9), sharex=True)
     axes[0].bar(x - width / 2, nested, width=width, label=display_name("JlocQ"))
-    axes[0].bar(x + width / 2, spectral, width=width, label=display_name("Jspectral"))
+    axes[0].bar(x + width / 2, spectral, width=width, label=display_name("Jspectral_null"))
     axes[0].set_ylabel("nested total")
     axes[0].set_title("Nested branch and phase-null spectral baseline")
     axes[0].legend()
@@ -258,16 +258,16 @@ def main() -> None:
         Jnested = float(tree["Jnested_total"])
         Jstruct = float(tree["Jstruct_total"])
         Jhetero = float(tree["Jhetero_total"])
-        Jspectral = float(phase["Jspectral_total"])
-        Jphase = Jnested - Jspectral
+        Jspectral_null = float(phase["Jspectral_null_total"])
+        Jphase = Jnested - Jspectral_null
         phase_std = float(phase["phase_std"])
         phase_z = float("nan") if phase_std <= EPS else Jphase / phase_std
-        phase_decomposition_error = Jnested - Jspectral - Jphase
+        phase_decomposition_error = Jnested - Jspectral_null - Jphase
 
         if phase_decomposition_error < -1e-12 or phase_decomposition_error > 1e-12:
             raise ValueError(
                 "Nested phase decomposition failed: "
-                f"Jnested={Jnested:.12g}, Jspectral={Jspectral:.12g}, "
+                f"Jnested={Jnested:.12g}, Jspectral_null={Jspectral_null:.12g}, "
                 f"Jphase={Jphase:.12g}, diff={phase_decomposition_error:.12g}"
             )
 
@@ -278,7 +278,7 @@ def main() -> None:
                 "Jstruct": Jstruct,
                 "Jnested": Jnested,
                 "Jhetero": Jhetero,
-                "Jspectral": Jspectral,
+                "Jspectral_null": Jspectral_null,
                 "Jphase": Jphase,
                 "phase_std": phase_std,
                 "phase_z": phase_z,
@@ -293,9 +293,9 @@ def main() -> None:
         Jnested_profile = np.asarray(tree["Jnested"], dtype=float)
         Jstruct_profile = np.asarray(tree["Jstruct"], dtype=float)
         Jhetero_profile = np.asarray(tree["Jhetero"], dtype=float)
-        Jspectral_profile = np.asarray(phase["Jspectral_profile"], dtype=float)
+        Jspectral_null_profile = np.asarray(phase["Jspectral_null_profile"], dtype=float)
         phase_std_profile = np.asarray(phase["phase_profile_std"], dtype=float)
-        Jphase_profile = Jnested_profile - Jspectral_profile
+        Jphase_profile = Jnested_profile - Jspectral_null_profile
 
         for k in range(len(Jnested_profile)):
             profile_rows.append(
@@ -306,11 +306,11 @@ def main() -> None:
                     "Jstruct": float(Jstruct_profile[k]),
                     "Jnested": float(Jnested_profile[k]),
                     "Jhetero": float(Jhetero_profile[k]),
-                    "Jspectral": float(Jspectral_profile[k]),
+                    "Jspectral_null": float(Jspectral_null_profile[k]),
                     "Jphase": float(Jphase_profile[k]),
                     "phase_std": float(phase_std_profile[k]),
                     "decomposition_error": float(Jstruct_profile[k] - Jnested_profile[k] - Jhetero_profile[k]),
-                    "phase_decomposition_error": float(Jnested_profile[k] - Jspectral_profile[k] - Jphase_profile[k]),
+                    "phase_decomposition_error": float(Jnested_profile[k] - Jspectral_null_profile[k] - Jphase_profile[k]),
                 }
             )
 
@@ -322,7 +322,7 @@ def main() -> None:
             "Jstruct",
             "Jnested",
             "Jhetero",
-            "Jspectral",
+            "Jspectral_null",
             "Jphase",
             "phase_std",
             "phase_z",
@@ -343,7 +343,7 @@ def main() -> None:
             "Jstruct",
             "Jnested",
             "Jhetero",
-            "Jspectral",
+            "Jspectral_null",
             "Jphase",
             "phase_std",
             "decomposition_error",
@@ -360,7 +360,7 @@ def main() -> None:
         print("matplotlib is not installed; skipped plot generation.")
 
     print("Complexity tree summary")
-    print("label                 Cdetail    Jstruct    Jnested    Jhetero    Jspectral Jphase     phase_z")
+    print("label                 Cdetail    Jstruct    Jnested    Jhetero    Jspectral_null Jphase     phase_z")
     for row in summary_rows:
         print(
             f"{str(row['label']):<20s} "
@@ -368,7 +368,7 @@ def main() -> None:
             f"{float(row['Jstruct']):>10.4g} "
             f"{float(row['Jnested']):>10.4g} "
             f"{float(row['Jhetero']):>10.4g} "
-            f"{float(row['Jspectral']):>10.4g} "
+            f"{float(row['Jspectral_null']):>15.4g} "
             f"{float(row['Jphase']):>10.4g} "
             f"{float(row['phase_z']):>10.4g}"
         )

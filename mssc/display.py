@@ -6,7 +6,8 @@ DISPLAY_NAMES = {
     "Jglob": "Jglobal",
     "JlocQ": "Jnested",
     "Jhetero": "Jhetero",
-    "Jspectral": "Jspectral",
+    "Jspectral": "Jspectral_null",
+    "Jspectral_null": "Jspectral_null",
 }
 
 LEGACY_NAMES = {
