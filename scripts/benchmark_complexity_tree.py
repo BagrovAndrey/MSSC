@@ -111,6 +111,8 @@ def compute_tree_profiles(
 
     return {
         "C": C,
+        "lifted_E": lifted_E,
+        "weights": W,
         "Jnested": Jnested_profile,
         "Jstruct": Jstruct_profile,
         "Jhetero": Jhetero_profile,
@@ -120,6 +122,81 @@ def compute_tree_profiles(
         "Jhetero_total": Jhetero,
         "decomposition_error": decomposition_error,
     }
+
+
+def compute_weight_entropy_diagnostics(
+    label: str,
+    tree: dict[str, np.ndarray | float],
+    eps: float = EPS,
+) -> tuple[dict[str, float | str], list[dict[str, float | str]]]:
+    lifted_E = np.asarray(tree["lifted_E"], dtype=float)
+    W = np.asarray(tree["weights"], dtype=float)
+    Jstruct_profile = np.asarray(tree["Jstruct"], dtype=float)
+    Jnested_profile = np.asarray(tree["Jnested"], dtype=float)
+    Jhetero_profile = np.asarray(tree["Jhetero"], dtype=float)
+
+    Ebar_k = np.mean(np.sum(lifted_E, axis=-1), axis=(1, 2))
+    Wbar_k = np.mean(np.sum(W, axis=-1), axis=(1, 2))
+    qE_fraction_k = np.full_like(Ebar_k, np.nan, dtype=float)
+    valid = Ebar_k > eps
+    qE_fraction_k[valid] = Wbar_k[valid] / Ebar_k[valid]
+
+    Ebar = float(np.mean(np.sum(lifted_E, axis=(0, 3))))
+    Wbar = float(np.mean(np.sum(W, axis=(0, 3))))
+    total_E = float(np.sum(lifted_E))
+    total_W = float(np.sum(W))
+    qE_fraction = float("nan") if total_E <= eps else total_W / total_E
+
+    Jstruct = float(tree["Jstruct_total"])
+    Jnested = float(tree["Jnested_total"])
+    Jhetero = float(tree["Jhetero_total"])
+
+    Hstruct = float("nan") if Wbar <= eps else Jstruct / Wbar
+    Hnested = float("nan") if Wbar <= eps else Jnested / Wbar
+    Ihetero = float("nan") if Wbar <= eps else Jhetero / Wbar
+
+    if Wbar > eps:
+        entropy_error = Hstruct - Hnested - Ihetero
+        if abs(entropy_error) > 1e-11:
+            raise ValueError(
+                "Weight/entropy decomposition failed: "
+                f"label={label}, Hstruct={Hstruct:.12g}, "
+                f"Hnested={Hnested:.12g}, Ihetero={Ihetero:.12g}, diff={entropy_error:.12g}"
+            )
+    else:
+        entropy_error = 0.0
+
+    row = {
+        "label": label,
+        "Cdetail": float(tree["C_total"]),
+        "Ebar": Ebar,
+        "Wbar": Wbar,
+        "qE_fraction": qE_fraction,
+        "Hstruct": Hstruct,
+        "Hnested": Hnested,
+        "Ihetero": Ihetero,
+        "Jstruct": Jstruct,
+        "Jnested": Jnested,
+        "Jhetero": Jhetero,
+        "entropy_decomposition_error": entropy_error,
+    }
+
+    profile_rows: list[dict[str, float | str]] = []
+    for k in range(len(Ebar_k)):
+        profile_rows.append(
+            {
+                "label": label,
+                "k": k,
+                "Ebar_k": float(Ebar_k[k]),
+                "Wbar_k": float(Wbar_k[k]),
+                "qE_fraction_k": float(qE_fraction_k[k]),
+                "Jnested_k": float(Jnested_profile[k]),
+                "Jstruct_k": float(Jstruct_profile[k]),
+                "Jhetero_k": float(Jhetero_profile[k]),
+            }
+        )
+
+    return row, profile_rows
 
 
 def compute_phase_nested_stats(
@@ -225,6 +302,42 @@ def save_nested_vs_heterogeneous(path: Path, summary_rows: list[dict[str, float 
     plt.close(fig)
 
 
+def save_weight_entropy_profiles_plot(
+    path: Path,
+    profile_lookup: dict[str, dict[str, np.ndarray]],
+) -> None:
+    plt = require_matplotlib()
+    labels = ["fractal", "wavy_stripes"]
+    fig, axes = plt.subplots(4, 1, figsize=(9, 12), sharex=True)
+
+    for label in labels:
+        if label not in profile_lookup:
+            continue
+        data = profile_lookup[label]
+        k = np.arange(len(data["Ebar_k"]))
+        axes[0].plot(k, data["Ebar_k"], marker="o", label=label)
+        axes[1].plot(k, data["Wbar_k"], marker="o", label=label)
+        axes[2].plot(k, data["qE_fraction_k"], marker="o", label=label)
+        axes[3].plot(k, data["Jnested_k"], marker="o", label=label)
+
+    axes[0].set_ylabel("Ebar_k")
+    axes[0].set_title("Lifted Haar energy before coherence weighting")
+    axes[1].set_ylabel("Wbar_k")
+    axes[1].set_title("Organized weight after local q weighting")
+    axes[2].set_ylabel("qE_fraction_k")
+    axes[2].set_title("Coherence-retained energy fraction")
+    axes[3].set_ylabel("Jnested_k")
+    axes[3].set_xlabel("Scale index k")
+    axes[3].set_title("Nested complexity profile")
+
+    for ax in axes:
+        ax.legend()
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -238,6 +351,9 @@ def main() -> None:
     images = built_in_images(args.size, args.seed)
     summary_rows: list[dict[str, float | str]] = []
     profile_rows: list[dict[str, float | str]] = []
+    weight_entropy_summary_rows: list[dict[str, float | str]] = []
+    weight_entropy_profile_rows: list[dict[str, float | str]] = []
+    weight_entropy_profiles_by_label: dict[str, dict[str, np.ndarray]] = {}
 
     for label, image in images.items():
         if args.save_images:
@@ -314,6 +430,17 @@ def main() -> None:
                 }
             )
 
+        weight_row, weight_profile_rows = compute_weight_entropy_diagnostics(label, tree)
+        if label in {"patchwork", "fractal", "wavy_stripes"}:
+            weight_entropy_summary_rows.append(weight_row)
+        weight_entropy_profile_rows.extend(weight_profile_rows)
+        weight_entropy_profiles_by_label[label] = {
+            "Ebar_k": np.asarray([float(row["Ebar_k"]) for row in weight_profile_rows], dtype=float),
+            "Wbar_k": np.asarray([float(row["Wbar_k"]) for row in weight_profile_rows], dtype=float),
+            "qE_fraction_k": np.asarray([float(row["qE_fraction_k"]) for row in weight_profile_rows], dtype=float),
+            "Jnested_k": np.asarray([float(row["Jnested_k"]) for row in weight_profile_rows], dtype=float),
+        }
+
     save_csv_rows(
         args.out_dir / "complexity_tree_summary.csv",
         [
@@ -351,11 +478,47 @@ def main() -> None:
         ],
         profile_rows,
     )
+    save_csv_rows(
+        args.out_dir / "weight_entropy_decomposition.csv",
+        [
+            "label",
+            "Cdetail",
+            "Ebar",
+            "Wbar",
+            "qE_fraction",
+            "Hstruct",
+            "Hnested",
+            "Ihetero",
+            "Jstruct",
+            "Jnested",
+            "Jhetero",
+            "entropy_decomposition_error",
+        ],
+        weight_entropy_summary_rows,
+    )
+    save_csv_rows(
+        args.out_dir / "weight_entropy_profiles.csv",
+        [
+            "label",
+            "k",
+            "Ebar_k",
+            "Wbar_k",
+            "qE_fraction_k",
+            "Jnested_k",
+            "Jstruct_k",
+            "Jhetero_k",
+        ],
+        weight_entropy_profile_rows,
+    )
 
     try:
         save_complexity_tree_bars(args.out_dir / "complexity_tree_bars.png", summary_rows)
         save_nested_phase_decomposition(args.out_dir / "nested_phase_decomposition.png", summary_rows)
         save_nested_vs_heterogeneous(args.out_dir / "nested_vs_heterogeneous.png", summary_rows)
+        save_weight_entropy_profiles_plot(
+            args.out_dir / "weight_entropy_profiles.png",
+            weight_entropy_profiles_by_label,
+        )
     except ModuleNotFoundError:
         print("matplotlib is not installed; skipped plot generation.")
 
@@ -371,6 +534,24 @@ def main() -> None:
             f"{float(row['Jspectral_null']):>15.4g} "
             f"{float(row['Jphase']):>10.4g} "
             f"{float(row['phase_z']):>10.4g}"
+        )
+
+    print()
+    print("Weight/entropy decomposition")
+    print("label          Cdetail   Ebar      Wbar      qE_fraction Hstruct   Hnested   Ihetero   Jstruct   Jnested   Jhetero")
+    for row in weight_entropy_summary_rows:
+        print(
+            f"{str(row['label']):<14s} "
+            f"{float(row['Cdetail']):>8.4g} "
+            f"{float(row['Ebar']):>9.4g} "
+            f"{float(row['Wbar']):>9.4g} "
+            f"{float(row['qE_fraction']):>11.4g} "
+            f"{float(row['Hstruct']):>8.4g} "
+            f"{float(row['Hnested']):>8.4g} "
+            f"{float(row['Ihetero']):>8.4g} "
+            f"{float(row['Jstruct']):>8.4g} "
+            f"{float(row['Jnested']):>8.4g} "
+            f"{float(row['Jhetero']):>8.4g}"
         )
 
 
