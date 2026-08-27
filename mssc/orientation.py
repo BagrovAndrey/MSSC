@@ -309,6 +309,148 @@ def haar_channel_energy_map(image: np.ndarray) -> np.ndarray:
     return 0.5 * h * h
 
 
+def detail_energy_map_from_h(h: np.ndarray) -> np.ndarray:
+    """
+    Return native block detail energy e_B = |h_B|^2.
+
+    This is defined on the native 2x2 block grid of one RG layer and is used
+    by the orientation-blind energy-coherence diagnostic.
+    """
+    h = np.asarray(h, dtype=float)
+
+    if h.ndim != 3:
+        raise ValueError("h must have shape (n, n, d)")
+
+    return np.sum(h * h, axis=-1)
+
+
+def detail_energy_map(image: np.ndarray) -> np.ndarray:
+    """
+    Return native block detail energy e_B = |h_B|^2 for one RG layer.
+    """
+    h = haar_detail_vectors(image)
+    return detail_energy_map_from_h(h)
+
+
+def detail_energy_coherence_from_map(
+    energy_map: np.ndarray,
+    eps: float = 1e-15,
+) -> tuple[float, float, bool]:
+    """
+    Pearson nearest-neighbor correlation of native block detail-energy
+    fluctuations.
+
+    The correlation is computed on the native RG block grid before any lifting
+    back to original-image coordinates. It therefore measures spatial
+    organization already present on the RG layer, not artificial correlation
+    introduced by nearest-neighbor attribution.
+
+    Returns
+    -------
+    Qenergy : float
+        max(rho, 0) when the Pearson correlation is defined, else NaN.
+    variance : float
+        Variance of the concatenated pair arrays used for the Pearson
+        computation.
+    defined : bool
+        Whether the Pearson correlation is defined at this scale.
+    """
+    e = np.asarray(energy_map, dtype=float)
+
+    if e.ndim != 2:
+        raise ValueError("energy_map must have shape (n, n)")
+
+    if e.size == 0:
+        return float("nan"), 0.0, False
+
+    pairs_a = []
+    pairs_b = []
+
+    if e.shape[1] > 1:
+        pairs_a.append(e[:, :-1].ravel())
+        pairs_b.append(e[:, 1:].ravel())
+
+    if e.shape[0] > 1:
+        pairs_a.append(e[:-1, :].ravel())
+        pairs_b.append(e[1:, :].ravel())
+
+    if not pairs_a:
+        return float("nan"), 0.0, False
+
+    a = np.concatenate(pairs_a)
+    b = np.concatenate(pairs_b)
+
+    mean_a = float(np.mean(a))
+    mean_b = float(np.mean(b))
+    mean_energy = 0.5 * (mean_a + mean_b)
+
+    if mean_energy <= eps:
+        return float("nan"), 0.0, False
+
+    da = a - mean_a
+    db = b - mean_b
+    var_a = float(np.mean(da * da))
+    var_b = float(np.mean(db * db))
+    variance = 0.5 * (var_a + var_b)
+
+    if var_a <= eps or var_b <= eps:
+        return float("nan"), variance, False
+
+    cov = float(np.mean(da * db))
+    rho = cov / np.sqrt(var_a * var_b)
+
+    return float(max(rho, 0.0)), variance, True
+
+
+def detail_energy_coherence_profile(
+    image: np.ndarray,
+    n_steps: int | None = None,
+    eps: float = 1e-15,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Return native-grid detail-energy coherence diagnostics along the RG
+    trajectory.
+
+    Returns
+    -------
+    Ebar : ndarray
+        Mean native block detail energy at each scale.
+    Qenergy : ndarray
+        Nonnegative Pearson nearest-neighbor correlation of block-energy
+        fluctuations. Undefined entries are NaN.
+    variance : ndarray
+        Variance diagnostic for the native block-energy field.
+    defined : ndarray
+        Boolean mask indicating where Qenergy is defined.
+    """
+    validate_image(image)
+
+    if n_steps is None:
+        n_steps = max_steps(image.shape[0], block_size=2)
+
+    current = np.asarray(image, dtype=float)
+    ebar = []
+    qenergy = []
+    variance = []
+    defined = []
+
+    for _ in range(n_steps):
+        e_map = detail_energy_map(current)
+        q_val, var_val, is_defined = detail_energy_coherence_from_map(e_map, eps=eps)
+        ebar.append(float(np.mean(e_map)) if e_map.size else 0.0)
+        qenergy.append(q_val)
+        variance.append(var_val)
+        defined.append(is_defined)
+        current = coarse_grain(current, block_size=2)
+
+    return (
+        np.asarray(ebar, dtype=float),
+        np.asarray(qenergy, dtype=float),
+        np.asarray(variance, dtype=float),
+        np.asarray(defined, dtype=bool),
+    )
+
+
 def haar_channel_energy_profile(
     image: np.ndarray,
     n_steps: int | None = None,
