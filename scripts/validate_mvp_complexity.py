@@ -278,6 +278,76 @@ def compute_weighted_tree(
     )
 
 
+def compute_weighted_tree_profiles(
+    image: np.ndarray,
+    n_steps: int | None,
+    min_qenergy_pairs: int,
+) -> dict[str, np.ndarray | float]:
+    C = complexity_profile(image, block_size=2, n_steps=n_steps)
+    lifted_E = lifted_haar_channel_energy_profile(image, n_steps=n_steps)
+    ebar_k, qenergy_k, variance_k, defined_k, pair_count_k = compute_qenergy_profile(
+        image,
+        n_steps=n_steps,
+        min_qenergy_pairs=min_qenergy_pairs,
+    )
+
+    qgate = np.zeros_like(qenergy_k, dtype=float)
+    valid_q = defined_k & np.isfinite(qenergy_k)
+    qgate[valid_q] = np.maximum(qenergy_k[valid_q], 0.0)
+    W = lifted_E * qgate[:, None, None, None]
+
+    Jnested_profile = local_scale_orientation_entropy_profile_from_weights(W)
+    Jstruct_profile = structural_complexity_profile_from_weights(W)
+    Jhetero_profile = heterogeneous_complexity_profile_from_weights(W)
+
+    total_E = float(np.sum(lifted_E))
+    total_W = float(np.sum(W))
+    Wbar = float(np.mean(np.sum(W, axis=(0, 3))))
+
+    Jstruct = float(np.sum(Jstruct_profile))
+    Jnested = float(np.sum(Jnested_profile))
+    Jhetero = float(np.sum(Jhetero_profile))
+
+    if abs(Jstruct - Jnested - Jhetero) > 1e-11:
+        raise ValueError(
+            "Jstruct decomposition failed: "
+            f"Jstruct={Jstruct:.12g}, Jnested={Jnested:.12g}, "
+            f"Jhetero={Jhetero:.12g}"
+        )
+
+    retained = float("nan") if total_E <= EPS else total_W / total_E
+    Hstruct = float("nan") if Wbar <= EPS else Jstruct / Wbar
+    Hnested = float("nan") if Wbar <= EPS else Jnested / Wbar
+    Ihetero = float("nan") if Wbar <= EPS else Jhetero / Wbar
+
+    if Wbar > EPS and abs(Hstruct - Hnested - Ihetero) > 1e-11:
+        raise ValueError(
+            "Entropy decomposition failed: "
+            f"Hstruct={Hstruct:.12g}, Hnested={Hnested:.12g}, Ihetero={Ihetero:.12g}"
+        )
+
+    Wbar_k = np.mean(np.sum(W, axis=-1), axis=(1, 2))
+    return {
+        "C_profile": C,
+        "Qenergy_profile": qenergy_k,
+        "Qenergy_defined": defined_k,
+        "energy_variance_profile": variance_k,
+        "neighbor_pair_count_profile": pair_count_k,
+        "Wbar_profile": Wbar_k,
+        "Jnested_profile": Jnested_profile,
+        "Jstruct_profile": Jstruct_profile,
+        "Jhetero_profile": Jhetero_profile,
+        "Cdetail": float(np.sum(C)),
+        "Jstruct": Jstruct,
+        "Jnested": Jnested,
+        "Jhetero": Jhetero,
+        "Hstruct": Hstruct,
+        "Hnested": Hnested,
+        "Ihetero": Ihetero,
+        "retained_energy_fraction": retained,
+    }
+
+
 def analyze_replicate(
     label: str,
     source: str,
@@ -287,11 +357,30 @@ def analyze_replicate(
     n_steps: int | None,
     min_qenergy_pairs: int,
 ) -> ReplicateResult:
-    summary, profile_rows = compute_weighted_tree(
+    summary = compute_weighted_tree_profiles(
         image=image,
         n_steps=n_steps,
         min_qenergy_pairs=min_qenergy_pairs,
     )
+    profile_rows: list[dict[str, float | int | str | bool]] = []
+    ebar_k, qenergy_k, variance_k, defined_k, pair_count_k = compute_qenergy_profile(
+        image,
+        n_steps=n_steps,
+        min_qenergy_pairs=min_qenergy_pairs,
+    )
+    wbar_k = np.asarray(summary["Wbar_profile"], dtype=float)
+    for k in range(len(ebar_k)):
+        profile_rows.append(
+            {
+                "k": k,
+                "Ebar_k": float(ebar_k[k]),
+                "Qenergy_k": float(qenergy_k[k]),
+                "Qenergy_defined": bool(defined_k[k]),
+                "energy_variance_k": float(variance_k[k]),
+                "neighbor_pair_count": int(pair_count_k[k]),
+                "Wbar_k": float(wbar_k[k]),
+            }
+        )
     return ReplicateResult(
         label=label,
         source=source,
