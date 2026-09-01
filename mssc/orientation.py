@@ -402,6 +402,294 @@ def detail_energy_coherence_from_map(
     return float(max(rho, 0.0)), variance, True
 
 
+def native_neighbor_pair_count(grid_shape: tuple[int, int]) -> int:
+    """
+    Return the number of horizontal+vertical nearest-neighbor pairs on a grid.
+    """
+    nrows, ncols = grid_shape
+    horizontal = nrows * max(ncols - 1, 0)
+    vertical = max(nrows - 1, 0) * ncols
+    return int(horizontal + vertical)
+
+
+def _pearson_stats_from_pair_arrays(
+    a: np.ndarray,
+    b: np.ndarray,
+    eps: float = 1e-15,
+) -> tuple[float, float, bool, bool, bool]:
+    """
+    Return centered Pearson statistics for paired energy samples.
+
+    Returns
+    -------
+    rho : float
+        Raw Pearson correlation when defined, else NaN.
+    variance : float
+        Mean of the variances of the two paired arrays.
+    defined : bool
+        Whether rho is numerically defined.
+    zero_energy : bool
+        Whether the mean paired energy is effectively zero.
+    nonzero_constant : bool
+        Whether the paired energy is effectively constant but nonzero.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+
+    if a.ndim != 1 or b.ndim != 1 or a.shape != b.shape:
+        raise ValueError("a and b must be one-dimensional arrays with the same shape")
+
+    if a.size == 0:
+        return float("nan"), 0.0, False, False, False
+
+    mean_a = float(np.mean(a))
+    mean_b = float(np.mean(b))
+    mean_energy = 0.5 * (mean_a + mean_b)
+
+    if mean_energy <= eps:
+        return float("nan"), 0.0, False, True, False
+
+    da = a - mean_a
+    db = b - mean_b
+    var_a = float(np.mean(da * da))
+    var_b = float(np.mean(db * db))
+    variance = 0.5 * (var_a + var_b)
+
+    if var_a <= eps or var_b <= eps:
+        return float("nan"), variance, False, False, True
+
+    cov = float(np.mean(da * db))
+    rho = cov / np.sqrt(var_a * var_b)
+    return float(rho), variance, True, False, False
+
+
+def detail_energy_pair_arrays(
+    energy_map: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """
+    Return concatenated and directional nearest-neighbor native-energy pairs.
+    """
+    e = np.asarray(energy_map, dtype=float)
+
+    if e.ndim != 2:
+        raise ValueError("energy_map must have shape (n, n)")
+
+    if e.size == 0:
+        empty = np.asarray([], dtype=float)
+        return {
+            "all_a": empty,
+            "all_b": empty,
+            "horizontal_a": empty,
+            "horizontal_b": empty,
+            "vertical_a": empty,
+            "vertical_b": empty,
+        }
+
+    if e.shape[1] > 1:
+        horizontal_a = e[:, :-1].ravel()
+        horizontal_b = e[:, 1:].ravel()
+    else:
+        horizontal_a = np.asarray([], dtype=float)
+        horizontal_b = np.asarray([], dtype=float)
+
+    if e.shape[0] > 1:
+        vertical_a = e[:-1, :].ravel()
+        vertical_b = e[1:, :].ravel()
+    else:
+        vertical_a = np.asarray([], dtype=float)
+        vertical_b = np.asarray([], dtype=float)
+
+    if horizontal_a.size and vertical_a.size:
+        all_a = np.concatenate([horizontal_a, vertical_a])
+        all_b = np.concatenate([horizontal_b, vertical_b])
+    elif horizontal_a.size:
+        all_a = horizontal_a.copy()
+        all_b = horizontal_b.copy()
+    elif vertical_a.size:
+        all_a = vertical_a.copy()
+        all_b = vertical_b.copy()
+    else:
+        all_a = np.asarray([], dtype=float)
+        all_b = np.asarray([], dtype=float)
+
+    return {
+        "all_a": all_a,
+        "all_b": all_b,
+        "horizontal_a": horizontal_a,
+        "horizontal_b": horizontal_b,
+        "vertical_a": vertical_a,
+        "vertical_b": vertical_b,
+    }
+
+
+def detail_energy_correlation_stats_from_map(
+    energy_map: np.ndarray,
+    eps: float = 1e-15,
+) -> dict[str, float | bool | int]:
+    """
+    Return raw Pearson diagnostics on the native block-energy grid.
+    """
+    e = np.asarray(energy_map, dtype=float)
+
+    if e.ndim != 2:
+        raise ValueError("energy_map must have shape (n, n)")
+
+    pair_arrays = detail_energy_pair_arrays(e)
+    pair_count = int(pair_arrays["all_a"].size)
+    horizontal_pairs = int(pair_arrays["horizontal_a"].size)
+    vertical_pairs = int(pair_arrays["vertical_a"].size)
+
+    if e.size == 0:
+        return {
+            "rho_all": float("nan"),
+            "rho_horizontal": float("nan"),
+            "rho_vertical": float("nan"),
+            "variance_all": 0.0,
+            "variance_horizontal": 0.0,
+            "variance_vertical": 0.0,
+            "defined_all": False,
+            "defined_horizontal": False,
+            "defined_vertical": False,
+            "zero_energy": True,
+            "nonzero_constant": False,
+            "pair_count": pair_count,
+            "horizontal_pair_count": horizontal_pairs,
+            "vertical_pair_count": vertical_pairs,
+        }
+
+    rho_all, variance_all, defined_all, zero_energy, nonzero_constant = _pearson_stats_from_pair_arrays(
+        pair_arrays["all_a"],
+        pair_arrays["all_b"],
+        eps=eps,
+    )
+
+    rho_horizontal, variance_horizontal, defined_horizontal, _, _ = _pearson_stats_from_pair_arrays(
+        pair_arrays["horizontal_a"],
+        pair_arrays["horizontal_b"],
+        eps=eps,
+    )
+    rho_vertical, variance_vertical, defined_vertical, _, _ = _pearson_stats_from_pair_arrays(
+        pair_arrays["vertical_a"],
+        pair_arrays["vertical_b"],
+        eps=eps,
+    )
+
+    return {
+        "rho_all": float(rho_all),
+        "rho_horizontal": float(rho_horizontal),
+        "rho_vertical": float(rho_vertical),
+        "variance_all": float(variance_all),
+        "variance_horizontal": float(variance_horizontal),
+        "variance_vertical": float(variance_vertical),
+        "defined_all": bool(defined_all),
+        "defined_horizontal": bool(defined_horizontal),
+        "defined_vertical": bool(defined_vertical),
+        "zero_energy": bool(zero_energy),
+        "nonzero_constant": bool(nonzero_constant),
+        "pair_count": pair_count,
+        "horizontal_pair_count": horizontal_pairs,
+        "vertical_pair_count": vertical_pairs,
+    }
+
+
+def local_detail_energy_correlation_map(
+    energy_map: np.ndarray,
+    window_size: int = 5,
+    min_local_pairs: int = 12,
+    transform: str = "pos",
+    eps: float = 1e-15,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Local native-grid Pearson gate map on clipped odd-sized neighborhoods.
+
+    Parameters
+    ----------
+    energy_map:
+        Native block-energy grid.
+    window_size:
+        Odd local window size in native blocks.
+    min_local_pairs:
+        Minimum number of local horizontal+vertical pairs required unless
+        the explicit constant-energy convention applies.
+    transform:
+        One of {"pos", "abs", "sq"}.
+
+    Returns
+    -------
+    q_map:
+        Local gate map after the requested Pearson transformation and
+        constant-energy convention.
+    defined_map:
+        Whether the raw local Pearson rho is numerically defined and had
+        enough local pairs.
+    pair_count_map:
+        Number of local horizontal+vertical pairs used at each native block.
+    """
+    e = np.asarray(energy_map, dtype=float)
+
+    if e.ndim != 2:
+        raise ValueError("energy_map must have shape (n, n)")
+    if window_size <= 0 or window_size % 2 == 0:
+        raise ValueError("window_size must be a positive odd integer")
+    if transform not in {"pos", "abs", "sq"}:
+        raise ValueError("transform must be 'pos', 'abs', or 'sq'")
+
+    nrows, ncols = e.shape
+    q_map = np.zeros((nrows, ncols), dtype=float)
+    defined_map = np.zeros((nrows, ncols), dtype=bool)
+    pair_count_map = np.zeros((nrows, ncols), dtype=int)
+
+    radius = window_size // 2
+
+    for row in range(nrows):
+        r0 = max(0, row - radius)
+        r1 = min(nrows, row + radius + 1)
+        for col in range(ncols):
+            c0 = max(0, col - radius)
+            c1 = min(ncols, col + radius + 1)
+
+            window = e[r0:r1, c0:c1]
+            pair_arrays = detail_energy_pair_arrays(window)
+            pair_count = int(pair_arrays["all_a"].size)
+            pair_count_map[row, col] = pair_count
+
+            if window.size == 0:
+                continue
+
+            mean_energy = float(np.mean(window))
+            if mean_energy <= eps:
+                q_map[row, col] = 0.0
+                continue
+
+            variance_window = float(np.var(window))
+            if variance_window <= eps:
+                q_map[row, col] = 1.0
+                continue
+
+            if pair_count < min_local_pairs:
+                q_map[row, col] = 0.0
+                continue
+
+            rho, _variance, is_defined, _zero_energy, _nonzero_constant = _pearson_stats_from_pair_arrays(
+                pair_arrays["all_a"],
+                pair_arrays["all_b"],
+                eps=eps,
+            )
+            if not is_defined or not np.isfinite(rho):
+                q_map[row, col] = 0.0
+                continue
+
+            defined_map[row, col] = True
+            if transform == "pos":
+                q_map[row, col] = max(float(rho), 0.0)
+            elif transform == "abs":
+                q_map[row, col] = abs(float(rho))
+            else:
+                q_map[row, col] = float(rho) * float(rho)
+
+    return q_map, defined_map, pair_count_map
+
+
 def detail_energy_coherence_profile(
     image: np.ndarray,
     n_steps: int | None = None,
